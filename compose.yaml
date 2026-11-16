@@ -1,0 +1,21 @@
+# Local development: Postgres only. The engine runs on your machine with `go run`.
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: weir
+      POSTGRES_PASSWORD: weir
+      POSTGRES_DB: weir
+    ports:
+      # An unusual host port, so it does not collide with a Postgres you already run.
+      - "54329:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U weir -d weir"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    volumes:
+      - weir-postgres:/var/lib/postgresql/data
+
+volumes:
+  weir-postgres:
