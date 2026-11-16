@@ -1,0 +1,53 @@
+# A support inbox. A small model labels each message, an agent drafts a reply,
+# a person approves it, and code sends it. Messages labelled "other" are filed
+# without an agent ever running.
+weir: "0.1"
+namespace: examples
+name: support-inbox
+budget: { usd: 1.00 }
+
+steps:
+  - id: classify
+    kind: decide
+    template: support-classify@1
+    labels: [refund, bug, sales, other]
+    confidence: 0.7
+    default: other              # anything unclear is filed, not answered
+    next:
+      - when: label == "other"
+        go: file
+
+  - id: draft
+    kind: ai
+    prompt: support-reply@1
+    tier: small
+    input:
+      message: input.message
+      kind: steps.classify.label
+    output:
+      schema:
+        type: object
+        required: [reply]
+        additionalProperties: false
+        properties:
+          reply: { type: string }
+    budget: { usd: 0.50 }
+
+  - id: approve
+    kind: human
+    assign: { role: team_lead, not: run.requester }
+    next:
+      - when: outcome == "rejected"
+        go: file
+
+  - id: send
+    kind: deterministic
+    handler: core.echo
+    input:
+      to: input.from
+      reply: steps.draft.output.reply
+    end: true
+
+  - id: file
+    kind: deterministic
+    handler: core.noop

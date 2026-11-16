@@ -48,3 +48,33 @@ func TestMigrateNeedsADatabase(t *testing.T) {
 		t.Fatalf("stderr = %q, want it to name the missing setting", errOut.String())
 	}
 }
+
+func TestCommandsCheckTheirArguments(t *testing.T) {
+	for _, args := range [][]string{
+		{"publish"},
+		{"run"},
+		{"status"},
+		{"approve"},
+		{"connection", "only-a-name"},
+	} {
+		var out, errOut bytes.Buffer
+		if code := run(context.Background(), args, noEnv, &out, &errOut); code != 1 {
+			t.Errorf("%v: exit code = %d, want 1", args, code)
+		}
+		if !strings.Contains(errOut.String(), "argument") {
+			t.Errorf("%v: stderr = %q, want it to explain the arguments", args, errOut.String())
+		}
+	}
+}
+
+func TestHelpListsEveryCommand(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if code := run(context.Background(), []string{"help"}, noEnv, &out, &errOut); code != 0 {
+		t.Fatalf("exit code = %d", code)
+	}
+	for _, name := range []string{"migrate", "serve", "publish", "template", "connection", "run", "status", "tasks", "approve", "resume"} {
+		if !strings.Contains(out.String(), name) {
+			t.Errorf("help does not mention %s", name)
+		}
+	}
+}
