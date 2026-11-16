@@ -6,37 +6,202 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 
 	"github.com/bobbydeveaux/weir/engine"
+	"github.com/bobbydeveaux/weir/runner"
+	"github.com/bobbydeveaux/weir/spec"
+	"github.com/bobbydeveaux/weir/worker"
 )
 
 // maxBody is the largest request body the API reads.
 const maxBody = 1 << 20
 
-// New returns the API's handler.
-func New(eng *engine.Engine) http.Handler {
-	s := &server{eng: eng}
+// New returns the API's handler. reg holds the tools agents may call through
+// the tool endpoints; it may be nil, in which case no tools are offered.
+func New(eng *engine.Engine, reg *worker.Registry) http.Handler {
+	if reg == nil {
+		reg = worker.NewRegistry()
+	}
+	s := &server{eng: eng, reg: reg}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		reply(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	mux.HandleFunc("POST /v1/definitions", s.publish)
+	mux.HandleFunc("GET /v1/definitions", s.raw(func(r *http.Request) (json.RawMessage, error) { return s.in(r).Definitions(r.Context()) }))
+	mux.HandleFunc("GET /v1/definitions/{namespace}/{name}", s.raw(func(r *http.Request) (json.RawMessage, error) {
+		version, _ := strconv.Atoi(r.URL.Query().Get("version"))
+		return s.in(r).Definition(r.Context(), r.PathValue("namespace"), r.PathValue("name"), version)
+	}))
+	mux.HandleFunc("GET /v1/templates", s.raw(func(r *http.Request) (json.RawMessage, error) { return s.in(r).Templates(r.Context()) }))
+	mux.HandleFunc("GET /v1/templates/{key}", s.raw(func(r *http.Request) (json.RawMessage, error) {
+		return s.in(r).TemplateVersions(r.Context(), r.PathValue("key"))
+	}))
+	mux.HandleFunc("GET /v1/connections", s.raw(func(r *http.Request) (json.RawMessage, error) { return s.in(r).Connections(r.Context()) }))
+	mux.HandleFunc("GET /v1/runs", s.raw(func(r *http.Request) (json.RawMessage, error) {
+		q := r.URL.Query()
+		limit, _ := strconv.Atoi(q.Get("limit"))
+		return s.in(r).Runs(r.Context(), engine.RunFilter{Namespace: q.Get("namespace"), Name: q.Get("name"),
+			Status: q.Get("status"), Requester: q.Get("requester"), Limit: limit})
+	}))
+	mux.HandleFunc("GET /v1/runs/{id}/record", s.raw(func(r *http.Request) (json.RawMessage, error) {
+		return s.in(r).RunRecord(r.Context(), r.PathValue("id"))
+	}))
+	mux.HandleFunc("GET /v1/usage", s.raw(func(r *http.Request) (json.RawMessage, error) {
+		days, _ := strconv.Atoi(r.URL.Query().Get("days"))
+		return s.in(r).Usage(r.Context(), r.URL.Query().Get("namespace"), days)
+	}))
+	mux.HandleFunc("POST /v1/events", func(w http.ResponseWriter, r *http.Request) {
+		who, ok := needActor(w, r)
+		if !ok {
+			return
+		}
+		var ev engine.Event
+		if !decode(w, r, &ev) {
+			return
+		}
+		out, err := s.in(r).Emit(r.Context(), ev, who)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		reply(w, http.StatusAccepted, out)
+	})
+	mux.HandleFunc("GET /v1/events", s.raw(func(r *http.Request) (json.RawMessage, error) {
+		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+		return s.in(r).Events(r.Context(), limit)
+	}))
+	mux.HandleFunc("GET /v1/triggers", s.raw(func(r *http.Request) (json.RawMessage, error) { return s.in(r).Triggers(r.Context()) }))
+	mux.HandleFunc("GET /v1/registry", func(w http.ResponseWriter, r *http.Request) {
+		// The server's own tools are offered to every workspace. A tool from
+		// an MCP connection belongs to the workspace that holds the connection.
+		tools := []engine.WorkspaceTool{}
+		for _, t := range reg.Describe(reg.ToolNames()...) {
+			tools = append(tools, engine.WorkspaceTool{Name: t.Name, Description: t.Description, Class: t.Class, InputSchema: t.InputSchema})
+		}
+		own, err := s.in(r).WorkspaceTools(r.Context())
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		reply(w, http.StatusOK, map[string]any{"handlers": reg.HandlerNames(), "tools": append(tools, own...), "decide_providers": spec.DecideProviders})
+	})
 	mux.HandleFunc("POST /v1/templates/{key}", s.template)
 	mux.HandleFunc("PUT /v1/connections/{name}", s.connection)
 	mux.HandleFunc("POST /v1/runs", s.start)
 	mux.HandleFunc("GET /v1/runs/{id}", s.run)
+	mux.HandleFunc("GET /v1/runs/{id}/stream", s.streamRun)
+	mux.HandleFunc("GET /v1/stream", s.streamWorkspace)
 	mux.HandleFunc("POST /v1/runs/{id}/resume", s.resume)
+	mux.HandleFunc("POST /v1/runs/{id}/cancel", func(w http.ResponseWriter, r *http.Request) {
+		who, ok := needActor(w, r)
+		if !ok {
+			return
+		}
+		var in struct {
+			Reason string `json:"reason"`
+		}
+		if !decode(w, r, &in) {
+			return
+		}
+		if err := s.in(r).Cancel(r.Context(), r.PathValue("id"), who, in.Reason); err != nil {
+			fail(w, err)
+			return
+		}
+		reply(w, http.StatusOK, map[string]string{"status": "cancelled"})
+	})
 	mux.HandleFunc("GET /v1/tasks", s.tasks)
 	mux.HandleFunc("POST /v1/tasks/{id}/decision", s.decide)
 	mux.HandleFunc("POST /v1/callbacks/{token}", s.callback)
-	return mux
+	mux.HandleFunc("GET /v1/tools/{token}", s.toolList)
+	mux.HandleFunc("POST /v1/tools/{token}/call", s.toolCall)
+	mux.HandleFunc("GET /v1/workspaces", func(w http.ResponseWriter, r *http.Request) {
+		out, err := eng.Workspaces(r.Context())
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		reply(w, http.StatusOK, out)
+	})
+	mux.HandleFunc("POST /v1/workspaces", func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := needActor(w, r); !ok {
+			return
+		}
+		var in struct {
+			Slug string `json:"slug"`
+			Name string `json:"name"`
+		}
+		if !decode(w, r, &in) {
+			return
+		}
+		if err := eng.CreateWorkspace(r.Context(), in.Slug, in.Name); err != nil {
+			fail(w, err)
+			return
+		}
+		reply(w, http.StatusCreated, map[string]string{"slug": in.Slug})
+	})
+	return s.scoped(mux)
 }
 
-type server struct{ eng *engine.Engine }
+// WorkspaceHeader names the workspace a request is for. A request without it
+// is for the default workspace.
+const WorkspaceHeader = "X-Weir-Workspace"
+
+type engineKey struct{}
+
+// scoped resolves the request's workspace before any handler runs, so that no
+// handler can read or change another workspace's data.
+func (s *server) scoped(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		slug := r.Header.Get(WorkspaceHeader)
+		if slug == "" {
+			// A browser's event stream cannot set headers, so a stream may
+			// name its workspace in the address.
+			slug = r.URL.Query().Get("workspace")
+		}
+		if slug == "" {
+			slug = "default"
+		}
+		eng, err := s.eng.In(r.Context(), slug)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), engineKey{}, eng)))
+	})
+}
+
+// in returns the engine for the request's workspace.
+func (s *server) in(r *http.Request) *engine.Engine {
+	if eng, ok := r.Context().Value(engineKey{}).(*engine.Engine); ok {
+		return eng
+	}
+	return s.eng
+}
+
+// raw serves JSON the engine has already built.
+func (s *server) raw(get func(*http.Request) (json.RawMessage, error)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		out, err := get(r)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(out)
+	}
+}
+
+type server struct {
+	eng *engine.Engine
+	reg *worker.Registry
+}
 
 func actor(r *http.Request) string { return r.Header.Get("X-Weir-Actor") }
 
@@ -54,6 +219,8 @@ func fail(w http.ResponseWriter, err error) {
 		status = http.StatusNotFound
 	case errors.Is(err, engine.ErrNotAllowed):
 		status = http.StatusForbidden
+	case errors.Is(err, worker.ErrToolFailed):
+		status = http.StatusUnprocessableEntity
 	case errors.Is(err, engine.ErrStaleToken), errors.Is(err, engine.ErrTaskClosed), errors.Is(err, engine.ErrNotBlocked):
 		status = http.StatusConflict
 	}
@@ -102,7 +269,7 @@ func (s *server) publish(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	out, err := s.eng.Publish(r.Context(), source, who)
+	out, err := s.in(r).Publish(r.Context(), source, who)
 	if err != nil {
 		fail(w, err)
 		return
@@ -124,7 +291,7 @@ func (s *server) template(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusBadRequest, map[string]string{"error": "a template needs a user prompt"})
 		return
 	}
-	version, err := s.eng.PublishTemplate(r.Context(), r.PathValue("key"), t, who)
+	version, err := s.in(r).PublishTemplate(r.Context(), r.PathValue("key"), t, who)
 	if err != nil {
 		fail(w, err)
 		return
@@ -135,6 +302,11 @@ func (s *server) template(w http.ResponseWriter, r *http.Request) {
 func (s *server) connection(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		BaseURL string `json:"base_url"`
+		// Kind is "http" (the default) or "mcp". An MCP connection brings the
+		// server's tools into this workspace.
+		Kind string `json:"kind"`
+		// ReadOnly marks every tool of an MCP connection as a read.
+		ReadOnly bool `json:"read_only"`
 	}
 	if !decode(w, r, &in) {
 		return
@@ -143,7 +315,30 @@ func (s *server) connection(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusBadRequest, map[string]string{"error": "a connection needs a base_url"})
 		return
 	}
-	if err := s.eng.PutConnection(r.Context(), r.PathValue("name"), in.BaseURL); err != nil {
+	if in.Kind == "mcp" {
+		// Ask the server what it offers now, so that a workflow naming a tool
+		// it does not have is refused when it is published.
+		tools, err := worker.DiscoverMCP(r.Context(), in.BaseURL)
+		if err != nil {
+			reply(w, http.StatusBadGateway, map[string]string{"error": "the MCP server could not be asked for its tools: " + err.Error()})
+			return
+		}
+		if err := s.in(r).PutMCPConnection(r.Context(), r.PathValue("name"), in.BaseURL, in.ReadOnly, tools); err != nil {
+			fail(w, err)
+			return
+		}
+		names := make([]string, len(tools))
+		for i, t := range tools {
+			names[i] = r.PathValue("name") + "." + t.Name
+		}
+		reply(w, http.StatusOK, map[string]any{"name": r.PathValue("name"), "kind": "mcp", "tools": names})
+		return
+	}
+	if in.Kind != "" && in.Kind != "http" {
+		reply(w, http.StatusBadRequest, map[string]string{"error": "a connection's kind is http or mcp"})
+		return
+	}
+	if err := s.in(r).PutConnection(r.Context(), r.PathValue("name"), in.BaseURL); err != nil {
 		fail(w, err)
 		return
 	}
@@ -165,7 +360,7 @@ func (s *server) start(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
-	id, created, err := s.eng.StartRun(r.Context(), engine.StartRequest{Namespace: in.Namespace, Name: in.Name, Alias: in.Alias,
+	id, created, err := s.in(r).StartRun(r.Context(), engine.StartRequest{Namespace: in.Namespace, Name: in.Name, Alias: in.Alias,
 		Input: in.Input, Requester: who, IdempotencyKey: in.IdempotencyKey})
 	if err != nil {
 		fail(w, err)
@@ -179,7 +374,7 @@ func (s *server) start(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) run(w http.ResponseWriter, r *http.Request) {
-	v, err := s.eng.Run(r.Context(), r.PathValue("id"))
+	v, err := s.in(r).Run(r.Context(), r.PathValue("id"))
 	if err != nil {
 		fail(w, err)
 		return
@@ -198,7 +393,7 @@ func (s *server) resume(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
-	if err := s.eng.Resume(r.Context(), r.PathValue("id"), who, in.BudgetUSD); err != nil {
+	if err := s.in(r).Resume(r.Context(), r.PathValue("id"), who, in.BudgetUSD); err != nil {
 		fail(w, err)
 		return
 	}
@@ -206,7 +401,7 @@ func (s *server) resume(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) tasks(w http.ResponseWriter, r *http.Request) {
-	tasks, err := s.eng.Tasks(r.Context())
+	tasks, err := s.in(r).Tasks(r.Context())
 	if err != nil {
 		fail(w, err)
 		return
@@ -225,11 +420,14 @@ func (s *server) decide(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Outcome string `json:"outcome"`
 		Note    string `json:"note"`
+		// Data is anything the person supplies with the decision, such as
+		// values they corrected. It becomes part of the step's output.
+		Data json.RawMessage `json:"data"`
 	}
 	if !decode(w, r, &in) {
 		return
 	}
-	if err := s.eng.Decide(r.Context(), r.PathValue("id"), who, in.Outcome, in.Note); err != nil {
+	if err := s.in(r).Decide(r.Context(), r.PathValue("id"), who, in.Outcome, in.Note, in.Data); err != nil {
 		fail(w, err)
 		return
 	}
@@ -247,9 +445,42 @@ func (s *server) callback(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusBadRequest, map[string]string{"error": "the callback body is not valid JSON"})
 		return
 	}
-	if err := s.eng.Complete(r.Context(), r.PathValue("token"), engine.Result{Output: output, Actor: "callback"}); err != nil {
+	if err := s.in(r).Complete(r.Context(), r.PathValue("token"), engine.Result{Output: output, Actor: "callback"}); err != nil {
 		fail(w, err)
 		return
 	}
 	reply(w, http.StatusOK, map[string]string{"status": "accepted"})
+}
+
+// toolList tells an agent which tools its current step may call. The token is
+// the credential: it names one running attempt, and so one step's allow-list.
+func (s *server) toolList(w http.ResponseWriter, r *http.Request) {
+	runID, read, write, err := s.in(r).AllowedTools(r.Context(), r.PathValue("token"))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	tools := worker.DescribeFor(r.Context(), s.eng, s.reg, runID, append(read, write...)...)
+	if tools == nil {
+		tools = []runner.Tool{}
+	}
+	reply(w, http.StatusOK, tools)
+}
+
+// toolCall runs one tool on an agent's behalf. The engine decides whether the
+// step may call it, and every call is recorded, allowed or not.
+func (s *server) toolCall(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Name      string          `json:"name"`
+		Arguments json.RawMessage `json:"arguments"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	out, err := worker.CallTool(r.Context(), s.eng, s.reg, r.PathValue("token"), in.Name, in.Arguments)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	reply(w, http.StatusOK, map[string]any{"result": out})
 }

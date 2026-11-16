@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -16,7 +17,7 @@ const claudeSuccess = `{"type":"result","subtype":"success","is_error":false,"re
 "modelUsage":{"claude-haiku-5-5":{"inputTokens":10}}}`
 
 func fakeClaude(reply string, err error, seen *[]string, stdin *string) *Claude {
-	return &Claude{run: func(_ context.Context, _ string, args, _ []string, in string) ([]byte, error) {
+	return &Claude{run: func(_ context.Context, _ string, args, _ []string, in, _ string) ([]byte, error) {
 		*seen = args
 		*stdin = in
 		return []byte(reply), err
@@ -52,7 +53,7 @@ func TestClaudeRunParsesOutputCostAndUsage(t *testing.T) {
 }
 
 func TestClaudeIsNeverRunWithPermissionChecksOff(t *testing.T) {
-	args := strings.Join(claudeArgs("system", "opus", []byte(`{}`), 5), " ")
+	args := strings.Join(claudeArgs("system", "opus", []byte(`{}`), 5, ""), " ")
 	for _, banned := range []string{"dangerously", "bypassPermissions", "yolo"} {
 		if strings.Contains(args, banned) {
 			t.Errorf("args contain %q: %s", banned, args)
@@ -62,7 +63,7 @@ func TestClaudeIsNeverRunWithPermissionChecksOff(t *testing.T) {
 		t.Errorf("args do not keep permission checks on: %s", args)
 	}
 	// "--tools" followed by an empty value switches every built-in tool off.
-	list := claudeArgs("", "", nil, 0)
+	list := claudeArgs("", "", nil, 0, "")
 	if i := slices.Index(list, "--tools"); i < 0 || list[i+1] != "" {
 		t.Errorf("built-in tools are not switched off: %v", list)
 	}
@@ -141,5 +142,34 @@ func TestClaudeLive(t *testing.T) {
 	}
 	if res.Usage.CostUSD <= 0 {
 		t.Errorf("no cost was reported: %+v", res.Usage)
+	}
+}
+
+func TestAnAgentGivenFilesMayReadOnlyThose(t *testing.T) {
+	var args []string
+	var dir, found string
+	c := &Claude{run: func(_ context.Context, _ string, a, _ []string, _, d string) ([]byte, error) {
+		args, dir = a, d
+		data, _ := os.ReadFile(filepath.Join(d, "treaty.pdf"))
+		found = string(data)
+		return []byte(`{"result":"ok","structured_output":{"ok":true},"total_cost_usd":0.01}`), nil
+	}}
+	_, err := c.Run(context.Background(), RunRequest{Prompt: "read it", Schema: json.RawMessage(`{"type":"object"}`),
+		Files: []File{{Name: "treaty.pdf", Data: []byte("%PDF")}}})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if found != "%PDF" {
+		t.Errorf("the file was not in the working directory %q", dir)
+	}
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--tools Read ") || !strings.Contains(joined, "--allowedTools Read(/"+dir+"/**)") {
+		t.Errorf("args do not confine reading to the file directory: %s", joined)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Errorf("the file directory %q was left behind", dir)
+	}
+	if _, err := c.Run(context.Background(), RunRequest{Prompt: "x", Files: []File{{Name: "../escape.txt"}}}); err == nil {
+		t.Error("a file name with a directory was accepted")
 	}
 }

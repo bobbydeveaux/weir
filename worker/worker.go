@@ -12,7 +12,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -49,6 +51,7 @@ func Permanent(err error) error { return permanent{err} }
 type Registry struct {
 	mu       sync.RWMutex
 	handlers map[string]Handler
+	tools    map[string]Tool
 }
 
 // NewRegistry returns a registry with the built-in handlers.
@@ -68,6 +71,18 @@ func (r *Registry) Register(name string, h Handler) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.handlers[name] = h
+}
+
+// HandlerNames lists the registered handlers, in order.
+func (r *Registry) HandlerNames() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	names := make([]string, 0, len(r.handlers))
+	for name := range r.handlers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // Exists reports whether a handler is registered. It is what the engine uses
@@ -105,6 +120,16 @@ type Worker struct {
 	HTTP *http.Client
 	// PollEvery is the default delay between polls of an external step.
 	PollEvery time.Duration
+	// ToolURL is where an agent's tool calls are sent: the address of Weir's
+	// own API as the agent's machine sees it. Empty means CallbackURL.
+	ToolURL string
+}
+
+func (w *Worker) toolURL() string {
+	if w.ToolURL != "" {
+		return w.ToolURL
+	}
+	return w.CallbackURL
 }
 
 // kinds a worker executes. A human step never reaches a worker.
@@ -131,6 +156,19 @@ func (w *Worker) defaults() {
 // Run claims and runs steps until ctx is cancelled, sweeping as it goes.
 func (w *Worker) Run(ctx context.Context) error {
 	w.defaults()
+	// Hooks are sent from their own loop, so that an application hears about
+	// a run promptly even while this worker is busy with a long step.
+	go func() {
+		for ctx.Err() == nil {
+			if _, err := w.DeliverHooks(ctx); err != nil && ctx.Err() == nil {
+				fmt.Fprintf(os.Stderr, "weir: delivering hooks: %v\n", err)
+			}
+			select {
+			case <-ctx.Done():
+			case <-time.After(500 * time.Millisecond):
+			}
+		}
+	}()
 	lastSweep := time.Time{}
 	for ctx.Err() == nil {
 		if time.Since(lastSweep) > time.Second {
@@ -151,6 +189,31 @@ func (w *Worker) Run(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// DeliverHooks sends every hook that is due and returns how many arrived.
+func (w *Worker) DeliverHooks(ctx context.Context) (int, error) {
+	w.defaults()
+	return w.Engine.DeliverHooks(ctx, func(ctx context.Context, d engine.HookDelivery) error {
+		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.URL, bytes.NewReader(d.Body))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Weir-Hook-Id", d.ID)
+		req.Header.Set("Idempotency-Key", d.ID)
+		resp, err := w.HTTP.Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode >= 300 {
+			return fmt.Errorf("the receiver returned %d", resp.StatusCode)
+		}
+		return nil
+	})
 }
 
 // RunOnce claims one step and runs it. It reports whether there was a step to run.
@@ -234,8 +297,8 @@ func (w *Worker) deterministic(ctx context.Context, work *engine.Work) error {
 func (w *Worker) decide(ctx context.Context, work *engine.Work) error {
 	st := work.Step
 	system, prompt := render(work.Template, work.Input)
-	res, err := w.Runner.Decide(ctx, runner.DecideRequest{Step: st.ID, System: system, Prompt: prompt, Labels: st.Labels, Tier: st.Tier})
-	call := w.call(work, st.Template, system, prompt, res.Usage, err)
+	res, err := w.Runner.Decide(ctx, runner.DecideRequest{Step: st.ID, System: system, Prompt: prompt, Labels: st.Labels, Tier: st.Tier, Provider: st.Provider, Describe: st.Describe})
+	call := w.call(work, st.Template, system, prompt, fmt.Sprintf("%s (confidence %.2f)", res.Label, res.Confidence), res.Usage, err)
 
 	// A decide step never fails for want of an answer: anything short of a
 	// confident, valid label becomes the declared default.
@@ -257,6 +320,9 @@ func (w *Worker) ai(ctx context.Context, work *engine.Work) error {
 	st := work.Step
 	system, prompt := render(work.Template, work.Input)
 	req := runner.RunRequest{Step: st.ID, System: system, Prompt: prompt, Tier: st.Tier}
+	if work.Template != nil {
+		req.Model = work.Template.Model
+	}
 	if st.Output != nil {
 		req.Schema, _ = json.Marshal(st.Output.Schema)
 	}
@@ -269,10 +335,26 @@ func (w *Worker) ai(ctx context.Context, work *engine.Work) error {
 		}
 	}
 	if st.Tools != nil {
-		req.ToolsRead, req.ToolsWrite = st.Tools.Read, st.Tools.Write
+		// The agent is told about only the tools this step lists, and reaches
+		// them only through Weir, presenting this attempt's token.
+		names := append(append([]string{}, st.Tools.Read...), st.Tools.Write...)
+		req.Tools = DescribeFor(ctx, w.Engine, w.Handlers, work.RunID, names...)
+		req.ToolURL, req.ToolToken = strings.TrimRight(w.toolURL(), "/"), work.Token
+	}
+	for _, ref := range st.Files {
+		file, err := w.fetch(ctx, work, ref)
+		if err != nil {
+			return w.Engine.Fail(context.WithoutCancel(ctx), work.Token, engine.Failure{Type: "file_unavailable",
+				Message: err.Error(), Retryable: true, Actor: w.ID})
+		}
+		req.Files = append(req.Files, file)
 	}
 	res, err := w.Runner.Run(ctx, req)
-	call := w.call(work, st.Prompt, system, prompt, res.Usage, err)
+	response := res.Transcript
+	if response == "" {
+		response = string(res.Output)
+	}
+	call := w.call(work, st.Prompt, system, prompt, response, res.Usage, err)
 	done := context.WithoutCancel(ctx)
 	if err != nil {
 		return w.Engine.Fail(done, work.Token, engine.Failure{Type: "runner_failed", Message: err.Error(),
@@ -287,12 +369,13 @@ func (w *Worker) ai(ctx context.Context, work *engine.Work) error {
 }
 
 // call builds the audit record for one model call.
-func (w *Worker) call(work *engine.Work, ref, system, prompt string, u runner.Usage, err error) engine.AICall {
+func (w *Worker) call(work *engine.Work, ref, system, prompt, response string, u runner.Usage, err error) engine.AICall {
 	key, version, _ := spec.TemplateRef(ref)
 	sum := sha256.Sum256([]byte(system + "\n" + prompt))
 	c := engine.AICall{Runner: w.Runner.Name(), Provider: u.Provider, Model: u.Model, TemplateKey: key, TemplateVersion: version,
 		PromptHash: hex.EncodeToString(sum[:]), TokensIn: u.TokensIn, TokensOut: u.TokensOut,
-		CostUSD: u.CostUSD, CostEstimated: u.CostEstimated, Duration: u.Duration}
+		CostUSD: u.CostUSD, CostEstimated: u.CostEstimated, Duration: u.Duration,
+		Prompt: strings.TrimSpace("SYSTEM:\n" + system + "\n\nUSER:\n" + prompt), Response: response}
 	if c.Provider == "" {
 		c.Provider = "unknown"
 	}
@@ -329,7 +412,7 @@ func (w *Worker) external(ctx context.Context, work *engine.Work) error {
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode >= 400 {
 		return w.Engine.Fail(ctx, work.Token, engine.Failure{Type: "call_failed",
-			Message:   fmt.Sprintf("%s %s returned %d", method, st.Call.Path, resp.StatusCode),
+			Message:   fmt.Sprintf("%s %s returned %d%s", method, st.Call.Path, resp.StatusCode, reason(body)),
 			Retryable: resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests, Actor: w.ID})
 	}
 
@@ -359,15 +442,49 @@ func (w *Worker) external(ctx context.Context, work *engine.Work) error {
 	return w.Engine.Defer(ctx, work.Token, every)
 }
 
-// render fills a template's {{name}} placeholders from the step's input.
-// {{input}} stands for the whole input as JSON.
-func render(t *engine.Template, input json.RawMessage) (system, prompt string) {
-	if t == nil {
-		return "", string(input)
+// maxFile is the largest document fetched for an agent.
+const maxFile = 20 << 20
+
+// fetch downloads one document an ai step lists, from the named connection.
+func (w *Worker) fetch(ctx context.Context, work *engine.Work, ref spec.FileRef) (runner.File, error) {
+	fill := filler(work.Input)
+	name, path := fill(ref.Name), fill(ref.Path)
+	base, err := w.Engine.ConnectionURL(ctx, work.RunID, ref.Connection)
+	if err != nil {
+		return runner.File{}, err
 	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(base, "/")+path, nil)
+	if err != nil {
+		return runner.File{}, err
+	}
+	client := w.HTTP
+	if client == nil {
+		client = http.DefaultClient
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return runner.File{}, fmt.Errorf("fetch %s: %w", name, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return runner.File{}, fmt.Errorf("fetch %s: %s returned %d", name, ref.Connection, resp.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxFile+1))
+	if err != nil {
+		return runner.File{}, fmt.Errorf("fetch %s: %w", name, err)
+	}
+	if len(data) > maxFile {
+		return runner.File{}, fmt.Errorf("%s is larger than %d MB", name, maxFile>>20)
+	}
+	return runner.File{Name: name, Data: data}, nil
+}
+
+// filler returns a function that fills {{name}} placeholders from a step's
+// input. {{input}} stands for the whole input as JSON.
+func filler(input json.RawMessage) func(string) string {
 	values := map[string]any{}
 	_ = json.Unmarshal(input, &values)
-	fill := func(s string) string {
+	return func(s string) string {
 		s = strings.ReplaceAll(s, "{{input}}", string(input))
 		for k, v := range values {
 			text, ok := v.(string)
@@ -379,5 +496,39 @@ func render(t *engine.Template, input json.RawMessage) (system, prompt string) {
 		}
 		return s
 	}
+}
+
+// render fills a template's placeholders from the step's input.
+func render(t *engine.Template, input json.RawMessage) (system, prompt string) {
+	if t == nil {
+		return "", string(input)
+	}
+	fill := filler(input)
 	return fill(t.System), fill(t.User)
+}
+
+// reason picks out why a third party refused a call, when its reply says, so
+// that the person looking at a failed step is not left with a bare status code.
+func reason(body []byte) string {
+	var reply struct {
+		Error   string `json:"error"`
+		Detail  string `json:"detail"`
+		Message string `json:"message"`
+	}
+	text := ""
+	if json.Unmarshal(body, &reply) == nil {
+		for _, candidate := range []string{reply.Error, reply.Detail, reply.Message} {
+			if candidate != "" {
+				text = candidate
+				break
+			}
+		}
+	}
+	if text == "" {
+		return ""
+	}
+	if len(text) > 300 {
+		text = text[:300] + "…"
+	}
+	return ": " + text
 }

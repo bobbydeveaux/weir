@@ -89,7 +89,7 @@ func TestAWorkflowDrivenEntirelyOverHTTP(t *testing.T) {
 	reg := worker.NewRegistry()
 	eng.HandlerExists = reg.Exists
 
-	apiServer := httptest.NewServer(api.New(eng))
+	apiServer := httptest.NewServer(api.New(eng, reg))
 	defer apiServer.Close()
 	c := client{t: t, base: apiServer.URL}
 

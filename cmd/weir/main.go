@@ -21,7 +21,9 @@ import (
 	"github.com/bobbydeveaux/weir/engine"
 	"github.com/bobbydeveaux/weir/engine/store"
 	"github.com/bobbydeveaux/weir/internal/config"
+	"github.com/bobbydeveaux/weir/internal/mcpbridge"
 	"github.com/bobbydeveaux/weir/runner"
+	"github.com/bobbydeveaux/weir/spec"
 	"github.com/bobbydeveaux/weir/worker"
 )
 
@@ -72,6 +74,9 @@ type app struct {
 	ctx    context.Context
 	getenv func(string) string
 	out    io.Writer
+	in     io.Reader
+	// reg holds the handlers and tools this process provides.
+	reg *worker.Registry
 }
 
 // run executes one command and returns the process exit code.
@@ -80,11 +85,11 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		fmt.Fprint(stderr, usage)
 		return 2
 	}
-	a := &app{ctx: ctx, getenv: getenv, out: stdout}
+	a := &app{ctx: ctx, getenv: getenv, out: stdout, in: os.Stdin}
 	commands := map[string]func([]string) error{
 		"migrate": a.migrate, "serve": a.serve, "publish": a.publish, "template": a.template,
 		"connection": a.connection, "run": a.start, "status": a.status, "tasks": a.tasks,
-		"approve": a.approve, "resume": a.resume,
+		"approve": a.approve, "resume": a.resume, "mcp": a.mcp,
 	}
 	switch args[0] {
 	case "version":
@@ -148,8 +153,10 @@ func (a *app) engine() (*engine.Engine, config.Config, func(), error) {
 		pool.Close()
 		return nil, cfg, nil, err
 	}
-	// Refuse workflows that name a handler no worker can run.
-	eng.HandlerExists = worker.NewRegistry().Exists
+	// Refuse workflows that name a handler or a tool no worker can provide.
+	a.reg = worker.NewRegistry()
+	worker.RegisterHTTPTools(a.reg, eng, nil)
+	eng.HandlerExists, eng.ToolClass = a.reg.Exists, a.reg.ToolClass
 	return eng, cfg, pool.Close, nil
 }
 
@@ -174,9 +181,38 @@ func (a *app) serve([]string) error {
 	defer done()
 
 	var r runner.Runner
+	decideWith := "scripted answers"
 	switch cfg.Runner {
 	case config.RunnerCLI:
-		r = &runner.Claude{Models: map[string]string{"small": "haiku", "large": "opus"}}
+		// Claude runs steps by default. A step with `tier: codex` goes to Codex,
+		// so one workflow can have one model write a change and another review it.
+		claude := &runner.Claude{Models: map[string]string{"small": "haiku", "large": "opus"}}
+		codex := &runner.Codex{Model: a.getenv("WEIR_CODEX_MODEL")}
+		// A decide step goes to the provider its workflow names. Steps that
+		// name none use Jev when it has a key, and Claude's small model otherwise.
+		router := runner.Router{
+			Default:  runner.ByTier{Default: claude, Tiers: map[string]runner.Runner{"codex": codex}},
+			Deciders: map[string]runner.Runner{"claude": claude, "codex": codex},
+		}
+		for service, env := range map[string]string{runner.ServiceJev: "WEIR_TYPESAFE_KEY", runner.ServiceGeminiDecision: "WEIR_GEMINI_API_KEY"} {
+			if key := a.getenv(env); key != "" {
+				router.Deciders[service] = &runner.Decisions{Service: service, Key: key}
+			} else {
+				router.Deciders[service] = runner.NotSetUp{Provider: service, Hint: "set " + env}
+			}
+		}
+		router.DecideDefault = a.getenv("WEIR_DECIDE_PROVIDER")
+		if router.DecideDefault == "" && a.getenv("WEIR_TYPESAFE_KEY") != "" {
+			router.DecideDefault = runner.ServiceJev
+		}
+		if _, ok := router.Deciders[router.DecideDefault]; router.DecideDefault != "" && !ok {
+			return fmt.Errorf("WEIR_DECIDE_PROVIDER is %q; it must be one of %s", router.DecideDefault, strings.Join(spec.DecideProviders, ", "))
+		}
+		decideWith = router.DecideDefault
+		if decideWith == "" {
+			decideWith = "claude"
+		}
+		r = router
 	case config.RunnerFake:
 		r = &runner.Fake{}
 	default:
@@ -186,17 +222,21 @@ func (a *app) serve([]string) error {
 	if public == "" {
 		public = "http://localhost" + cfg.HTTPAddr
 	}
-	w := &worker.Worker{Engine: eng, Runner: r, Handlers: worker.NewRegistry(), ID: "weir-serve", CallbackURL: public}
+	// Agents on this machine reach their tools at the API's own address.
+	w := &worker.Worker{Engine: eng, Runner: r, Handlers: a.reg, ID: "weir-serve", CallbackURL: public,
+		ToolURL: "http://localhost" + cfg.HTTPAddr}
 
-	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: api.New(eng), ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: api.New(eng, a.reg), ReadHeaderTimeout: 10 * time.Second}
 	errs := make(chan error, 2)
 	go func() { errs <- w.Run(a.ctx) }()
+	// Hear from Postgres when a run moves, so that streams send at once.
+	go func() { _ = eng.Listen(a.ctx) }()
 	go func() {
 		if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 			errs <- err
 		}
 	}()
-	fmt.Fprintf(a.out, "weir is listening on %s with the %s runner\n", cfg.HTTPAddr, cfg.Runner)
+	fmt.Fprintf(a.out, "weir is listening on %s with the %s runner; decisions use %s unless a step names a provider\n", cfg.HTTPAddr, cfg.Runner, decideWith)
 
 	select {
 	case <-a.ctx.Done():
@@ -206,6 +246,17 @@ func (a *app) serve([]string) error {
 	defer cancel()
 	_ = srv.Shutdown(shutdown)
 	return err
+}
+
+// mcp is started by an agent's command line, not by a person. It serves MCP
+// over standard input and output and passes every tool call to Weir's API.
+func (a *app) mcp([]string) error {
+	url, token := a.getenv("WEIR_TOOL_URL"), a.getenv("WEIR_TOOL_TOKEN")
+	if url == "" || token == "" {
+		return errors.New("mcp is started by the agent runner, which sets WEIR_TOOL_URL and WEIR_TOOL_TOKEN")
+	}
+	b := &mcpbridge.Bridge{BaseURL: strings.TrimRight(url, "/"), Token: token}
+	return b.Serve(a.ctx, a.in, a.out)
 }
 
 func (a *app) publish(args []string) error {

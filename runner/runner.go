@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -36,6 +37,11 @@ type DecideRequest struct {
 	Labels []string
 	// Tier names the model size to use. Empty means the runner's default.
 	Tier string
+	// Describe says what each label means, by label. It may be empty.
+	Describe map[string]string
+	// Provider names what should answer, as the workflow gave it. Empty
+	// means the server's default.
+	Provider string
 }
 
 // DecideResult is a runner's answer to a DecideRequest.
@@ -54,11 +60,33 @@ type RunRequest struct {
 	// Schema is the JSON Schema the output must match.
 	Schema json.RawMessage
 	Tier   string
+	// Model, when set, is the model the step's template asks for. It is used
+	// when the step names no tier.
+	Model string
 	// BudgetUSD is the most this call may spend. Zero means no limit.
 	BudgetUSD float64
-	// ToolsRead and ToolsWrite are the tools the agent may call.
-	ToolsRead  []string
-	ToolsWrite []string
+	// Tools are the tools the agent may call. The agent reaches them only
+	// through Weir, at ToolURL, presenting ToolToken.
+	Tools     []Tool
+	ToolURL   string
+	ToolToken string
+	// Files are documents the agent may read. They are the only files it can see.
+	Files []File
+}
+
+// File is a document given to an agent.
+type File struct {
+	// Name is the file's name, with no directory.
+	Name string
+	Data []byte
+}
+
+// Tool describes one tool an agent may call.
+type Tool struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Class       string         `json:"class"`
+	InputSchema map[string]any `json:"input_schema"`
 }
 
 // RunResult is what an agent produced.
@@ -135,3 +163,18 @@ func (f *Fake) Run(_ context.Context, req RunRequest) (RunResult, error) {
 
 // ErrNotBuilt is returned by a runner that is selected but not implemented yet.
 var ErrNotBuilt = errors.New("this runner is not built yet")
+
+// describeLabels turns label descriptions into lines for a language model's
+// instructions. It returns "" when there are none.
+func describeLabels(req DecideRequest) string {
+	var b strings.Builder
+	for _, label := range req.Labels {
+		if d := req.Describe[label]; d != "" {
+			fmt.Fprintf(&b, "\n- %s: %s", label, d)
+		}
+	}
+	if b.Len() == 0 {
+		return ""
+	}
+	return "\n\nThe labels mean:" + b.String()
+}

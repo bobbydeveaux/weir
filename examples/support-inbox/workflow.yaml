@@ -10,7 +10,13 @@ steps:
   - id: classify
     kind: decide
     template: support-classify@1
+    # provider: jev            # or gemini-decision, claude, codex. Left out, the server's default decides.
     labels: [refund, bug, sales, other]
+    describe:
+      refund: Wants money back for something already paid for
+      bug: Reports something that does not work
+      sales: Asks about buying, pricing or plans
+      other: Anything else, including thanks and small talk
     confidence: 0.7
     default: other              # anything unclear is filed, not answered
     next:

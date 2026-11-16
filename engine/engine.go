@@ -38,12 +38,22 @@ var (
 
 // Engine is the workflow engine. Create one with New.
 type Engine struct {
-	pool      *pgxpool.Pool
+	pool *pgxpool.Pool
+	// hub passes news of run events to whoever is streaming. Engines made by
+	// In share it.
+	hub *hub
+	// workspace is the id of the workspace this engine reads and writes.
+	// Everything a caller can name (workflows, templates, connections, runs,
+	// tasks) is looked up inside it. Work in progress is the exception: a
+	// worker claims steps from every workspace, and each step carries its own.
 	workspace string
 
 	// HandlerExists, when set, lets Publish refuse a definition that names an
 	// unregistered deterministic handler.
 	HandlerExists func(name string) bool
+	// ToolClass, when set, reports whether a tool exists and whether it is a
+	// read or a write. Publish uses it to check the tools an ai step lists.
+	ToolClass func(name string) (class string, ok bool)
 	// BackoffBase is the delay before a step's first retry. It doubles each time.
 	BackoffBase time.Duration
 	// MaxAbandoned is how many times a step is re-run after its worker
@@ -53,12 +63,63 @@ type Engine struct {
 
 // New returns an engine for the default workspace of the database behind pool.
 func New(ctx context.Context, pool *pgxpool.Pool) (*Engine, error) {
-	e := &Engine{pool: pool, BackoffBase: 2 * time.Second, MaxAbandoned: 3}
+	e := &Engine{pool: pool, hub: &hub{subs: map[chan Moved]struct{}{}}, BackoffBase: 2 * time.Second, MaxAbandoned: 3}
 	err := pool.QueryRow(ctx, `SELECT id::text FROM workspaces WHERE slug = 'default'`).Scan(&e.workspace)
 	if err != nil {
 		return nil, fmt.Errorf("find the default workspace (has the schema been migrated?): %w", err)
 	}
 	return e, nil
+}
+
+// Workspace is one tenant: a team, a customer or an application.
+type Workspace struct {
+	Slug      string    `json:"slug"`
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
+	// Workflows and Runs count what the workspace holds, so that a person
+	// looking at an empty one can see where the work is.
+	Workflows int `json:"workflows"`
+	Runs      int `json:"runs"`
+}
+
+// In returns an engine for the workspace with the given slug. It shares this
+// engine's database and settings.
+func (e *Engine) In(ctx context.Context, slug string) (*Engine, error) {
+	scoped := *e
+	err := e.pool.QueryRow(ctx, `SELECT id::text FROM workspaces WHERE slug = $1`, slug).Scan(&scoped.workspace)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("workspace %s: %w", slug, ErrNotFound)
+	}
+	return &scoped, err
+}
+
+// CreateWorkspace adds a workspace. Creating one that exists changes nothing.
+func (e *Engine) CreateWorkspace(ctx context.Context, slug, name string) error {
+	if name == "" {
+		name = slug
+	}
+	_, err := e.pool.Exec(ctx, `INSERT INTO workspaces (slug, name) VALUES ($1, $2) ON CONFLICT (slug) DO NOTHING`, slug, name)
+	if err != nil {
+		return fmt.Errorf("create workspace %s (a slug is lower-case letters, digits and hyphens): %w", slug, err)
+	}
+	return nil
+}
+
+// Workspaces lists every workspace.
+func (e *Engine) Workspaces(ctx context.Context) ([]Workspace, error) {
+	rows, err := e.pool.Query(ctx, `
+		SELECT w.slug, w.name, w.created_at,
+			(SELECT count(*) FROM definitions d WHERE d.workspace_id = w.id),
+			(SELECT count(*) FROM runs r WHERE r.workspace_id = w.id)
+		FROM workspaces w ORDER BY w.slug`)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (Workspace, error) {
+		var w Workspace
+		err := row.Scan(&w.Slug, &w.Name, &w.CreatedAt, &w.Workflows, &w.Runs)
+		return w, err
+	})
 }
 
 // inTx runs fn in a transaction, committing only if it returns nil.
@@ -109,7 +170,7 @@ func (e *Engine) PublishTemplate(ctx context.Context, key string, body Template,
 	return version, err
 }
 
-func (e *Engine) loadTemplate(ctx context.Context, q querier, ref string) (*Template, error) {
+func (e *Engine) loadTemplate(ctx context.Context, q querier, workspace, ref string) (*Template, error) {
 	key, version, ok := spec.TemplateRef(ref)
 	if !ok {
 		return nil, fmt.Errorf("%q is not a pinned template reference", ref)
@@ -117,7 +178,7 @@ func (e *Engine) loadTemplate(ctx context.Context, q querier, ref string) (*Temp
 	var raw string
 	err := q.QueryRow(ctx, `
 		SELECT v.body::text FROM template_versions v JOIN templates t ON t.id = v.template_id
-		WHERE t.workspace_id = $1::uuid AND t.key = $2 AND v.version = $3`, e.workspace, key, version).Scan(&raw)
+		WHERE t.workspace_id = $1::uuid AND t.key = $2 AND v.version = $3`, workspace, key, version).Scan(&raw)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("template %s: %w", ref, ErrNotFound)
 	}
@@ -132,14 +193,14 @@ func (e *Engine) loadTemplate(ctx context.Context, q querier, ref string) (*Temp
 func (e *Engine) PutConnection(ctx context.Context, name, baseURL string) error {
 	_, err := e.pool.Exec(ctx, `
 		INSERT INTO connections (workspace_id, name, base_url) VALUES ($1::uuid, $2, $3)
-		ON CONFLICT (workspace_id, name) DO UPDATE SET base_url = EXCLUDED.base_url`, e.workspace, name, baseURL)
+		ON CONFLICT (workspace_id, name) DO UPDATE SET base_url = EXCLUDED.base_url, kind = 'http', tools = '[]'::jsonb`, e.workspace, name, baseURL)
 	return err
 }
 
-func (e *Engine) connectionURL(ctx context.Context, q querier, name string) (string, error) {
+func (e *Engine) connectionURL(ctx context.Context, q querier, workspace, name string) (string, error) {
 	var url string
 	err := q.QueryRow(ctx, `SELECT base_url FROM connections WHERE workspace_id = $1::uuid AND name = $2`,
-		e.workspace, name).Scan(&url)
+		workspace, name).Scan(&url)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", fmt.Errorf("connection %q: %w", name, ErrNotFound)
 	}
@@ -171,16 +232,28 @@ func (e *Engine) Publish(ctx context.Context, source []byte, by string) (*Publis
 	for _, s := range def.Steps {
 		switch s.Kind {
 		case spec.KindDecide:
-			if _, err := e.loadTemplate(ctx, e.pool, s.Template); err != nil {
+			if _, err := e.loadTemplate(ctx, e.pool, e.workspace, s.Template); err != nil {
 				return nil, fmt.Errorf("step %s: %w", s.ID, err)
 			}
 		case spec.KindAI:
-			if _, err := e.loadTemplate(ctx, e.pool, s.Prompt); err != nil {
+			if _, err := e.loadTemplate(ctx, e.pool, e.workspace, s.Prompt); err != nil {
 				return nil, fmt.Errorf("step %s: %w", s.ID, err)
 			}
 		case spec.KindExternal:
-			if _, err := e.connectionURL(ctx, e.pool, s.Connection); err != nil {
+			if _, err := e.connectionURL(ctx, e.pool, e.workspace, s.Connection); err != nil {
 				return nil, fmt.Errorf("step %s: %w", s.ID, err)
+			}
+		}
+	}
+	for i, h := range def.Hooks {
+		if _, err := e.connectionURL(ctx, e.pool, e.workspace, h.Connection); err != nil {
+			return nil, fmt.Errorf("hooks[%d]: %w", i, err)
+		}
+	}
+	for _, s := range def.Steps {
+		for _, f := range s.Files {
+			if _, err := e.connectionURL(ctx, e.pool, e.workspace, f.Connection); err != nil {
+				return nil, fmt.Errorf("step %s: files: %w", s.ID, err)
 			}
 		}
 		if s.Output != nil {
@@ -188,6 +261,9 @@ func (e *Engine) Publish(ctx context.Context, source []byte, by string) (*Publis
 				return nil, fmt.Errorf("step %s: output schema: %w", s.ID, err)
 			}
 		}
+	}
+	if err := e.checkTools(ctx, def); err != nil {
+		return nil, err
 	}
 	specJSON, err := json.Marshal(def)
 	if err != nil {
@@ -256,13 +332,14 @@ func (e *Engine) StartRun(ctx context.Context, req StartRequest) (runID string, 
 	}
 	err = e.inTx(ctx, func(tx pgx.Tx) error {
 		var defID, versionID, specJSON string
+		var version int
 		err := tx.QueryRow(ctx, `
-			SELECT d.id::text, v.id::text, v.spec::text
+			SELECT d.id::text, v.id::text, v.spec::text, v.version
 			FROM definitions d
 			JOIN aliases a ON a.definition_id = d.id AND a.name = $4
 			JOIN definition_versions v ON v.id = a.version_id
 			WHERE d.workspace_id = $1::uuid AND d.namespace = $2 AND d.name = $3`,
-			e.workspace, req.Namespace, req.Name, req.Alias).Scan(&defID, &versionID, &specJSON)
+			e.workspace, req.Namespace, req.Name, req.Alias).Scan(&defID, &versionID, &specJSON, &version)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("definition %s/%s at alias %q: %w", req.Namespace, req.Name, req.Alias, ErrNotFound)
 		}
@@ -283,6 +360,7 @@ func (e *Engine) StartRun(ctx context.Context, req StartRequest) (runID string, 
 		if err := json.Unmarshal([]byte(specJSON), &def); err != nil {
 			return fmt.Errorf("read stored definition: %w", err)
 		}
+		def.Version = version
 		if def.Input != nil {
 			if err := validateJSON(def.Input.Schema, req.Input); err != nil {
 				return fmt.Errorf("run input: %w", err)
@@ -301,7 +379,7 @@ func (e *Engine) StartRun(ctx context.Context, req StartRequest) (runID string, 
 			return err
 		}
 		created = true
-		run := &runRow{id: runID, status: "running", input: string(req.Input), requester: req.Requester, budget: budget, def: &def}
+		run := &runRow{id: runID, workspace: e.workspace, status: "running", input: string(req.Input), requester: req.Requester, budget: budget, def: &def}
 		if err := e.event(ctx, tx, run, nil, nil, "run.started", req.Requester, map[string]any{"version": def.Version}); err != nil {
 			return err
 		}
@@ -417,6 +495,7 @@ type querier interface {
 // runRow is the part of a run the engine works with.
 type runRow struct {
 	id        string
+	workspace string
 	status    string
 	input     string
 	requester string
@@ -429,11 +508,12 @@ type runRow struct {
 func (e *Engine) loadRun(ctx context.Context, tx pgx.Tx, runID string) (*runRow, error) {
 	r := &runRow{id: runID}
 	var specJSON string
+	var version int
 	err := tx.QueryRow(ctx, `
-		SELECT r.status, r.input::text, r.requester, r.budget_usd::float8, r.spent_usd::float8, v.spec::text
+		SELECT r.workspace_id::text, r.status, r.input::text, r.requester, r.budget_usd::float8, r.spent_usd::float8, v.spec::text, v.version
 		FROM runs r JOIN definition_versions v ON v.id = r.definition_version_id
 		WHERE r.id = $1::uuid FOR UPDATE OF r`, runID).
-		Scan(&r.status, &r.input, &r.requester, &r.budget, &r.spent, &specJSON)
+		Scan(&r.workspace, &r.status, &r.input, &r.requester, &r.budget, &r.spent, &specJSON, &version)
 	if err != nil {
 		return nil, fmt.Errorf("load run %s: %w", runID, err)
 	}
@@ -441,6 +521,7 @@ func (e *Engine) loadRun(ctx context.Context, tx pgx.Tx, runID string) (*runRow,
 	if err := json.Unmarshal([]byte(specJSON), r.def); err != nil {
 		return nil, fmt.Errorf("read stored definition: %w", err)
 	}
+	r.def.Version = version
 	return r, nil
 }
 
@@ -460,8 +541,14 @@ func (e *Engine) event(ctx context.Context, tx pgx.Tx, run *runRow, stepID, atte
 	_, err := tx.Exec(ctx, `
 		INSERT INTO events (workspace_id, run_id, seq, step_id, attempt_id, type, actor, data)
 		VALUES ($1::uuid, $2::uuid, $3, $4::uuid, $5::uuid, $6, $7, $8::jsonb)`,
-		e.workspace, run.id, seq, stepID, attemptID, typ, actor, string(raw))
-	return err
+		run.workspace, run.id, seq, stepID, attemptID, typ, actor, string(raw))
+	if err != nil {
+		return err
+	}
+	if err := e.announce(ctx, tx, run); err != nil {
+		return err
+	}
+	return e.enqueueHooks(ctx, tx, run, stepID, seq, typ, actor, raw)
 }
 
 // wake records that a step is ready, so a worker can be woken.

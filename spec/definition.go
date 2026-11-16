@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -46,9 +47,11 @@ type Definition struct {
 
 	// Accepted so that documents written against the full spec still parse.
 	// The engine does not act on these yet; Unsupported reports any that are set.
-	Triggers any `yaml:"triggers,omitempty" json:"triggers,omitempty"`
-	Tiers    any `yaml:"tiers,omitempty" json:"tiers,omitempty"`
-	Hooks    any `yaml:"hooks,omitempty" json:"hooks,omitempty"`
+	// Triggers say which events start a run of this workflow.
+	Triggers []Trigger `yaml:"triggers,omitempty" json:"triggers,omitempty"`
+	Tiers    any       `yaml:"tiers,omitempty" json:"tiers,omitempty"`
+	// Hooks tell an application when something happens to a run.
+	Hooks []Hook `yaml:"hooks,omitempty" json:"hooks,omitempty"`
 }
 
 // Schema holds a JSON Schema, written inline in the definition.
@@ -82,12 +85,21 @@ type Step struct {
 	Labels     []string `yaml:"labels,omitempty" json:"labels,omitempty"`
 	Confidence float64  `yaml:"confidence,omitempty" json:"confidence,omitempty"`
 	Default    string   `yaml:"default,omitempty" json:"default,omitempty"`
+	// Describe says what each label means, by label. It is optional, and
+	// helps the model choose.
+	Describe map[string]string `yaml:"describe,omitempty" json:"describe,omitempty"`
+	// Provider names what answers a decide step: a decision model (jev,
+	// gemini-decision) or a language model (claude, codex). Empty means the
+	// server's default.
+	Provider string `yaml:"provider,omitempty" json:"provider,omitempty"`
 
 	// ai
-	Prompt string  `yaml:"prompt,omitempty" json:"prompt,omitempty"`
-	Tier   string  `yaml:"tier,omitempty" json:"tier,omitempty"`
-	Tools  *Tools  `yaml:"tools,omitempty" json:"tools,omitempty"`
-	Budget *Budget `yaml:"budget,omitempty" json:"budget,omitempty"`
+	Prompt string `yaml:"prompt,omitempty" json:"prompt,omitempty"`
+	Tier   string `yaml:"tier,omitempty" json:"tier,omitempty"`
+	Tools  *Tools `yaml:"tools,omitempty" json:"tools,omitempty"`
+	// Files are documents fetched for the agent to read.
+	Files  []FileRef `yaml:"files,omitempty" json:"files,omitempty"`
+	Budget *Budget   `yaml:"budget,omitempty" json:"budget,omitempty"`
 
 	// deterministic
 	Handler string `yaml:"handler,omitempty" json:"handler,omitempty"`
@@ -197,6 +209,32 @@ func (d *Definition) Validate(opts ValidateOptions) error {
 	if len(d.Steps) == 0 {
 		add("steps: a definition needs at least one step")
 	}
+	for i, h := range d.Hooks {
+		if h.Connection == "" || !strings.HasPrefix(h.Path, "/") {
+			add("hooks[%d]: needs a connection and a path starting with a slash", i)
+		}
+		if len(h.On) == 0 {
+			add("hooks[%d]: on must list at least one thing to report, such as run.succeeded", i)
+		}
+		for _, on := range h.On {
+			if !hookPattern.MatchString(on) {
+				add("hooks[%d]: on %q must be a name such as run.succeeded, a family such as run.*, or *", i, on)
+			}
+		}
+	}
+	for i, t := range d.Triggers {
+		if !eventPattern.MatchString(t.Event) {
+			add("triggers[%d]: event %q must be lower-case words joined by dots, such as order.placed", i, t.Event)
+		}
+		if t.When != "" {
+			if err := CheckExpression(t.When); err != nil {
+				add("triggers[%d]: when: %v", i, err)
+			}
+		}
+		if err := checkMapping(t.Input); err != nil {
+			add("triggers[%d]: input: %v", i, err)
+		}
+	}
 
 	ids := map[string]bool{}
 	for _, s := range d.Steps {
@@ -293,7 +331,15 @@ func validateDecide(s *Step, at string, add func(string, ...any)) {
 	if s.Confidence < 0 || s.Confidence > 1 {
 		add("%s: confidence must be between 0 and 1", at)
 	}
-	forbid(s, at, add, "decide", fieldsExcept("template", "labels", "confidence", "default", "tier"))
+	for label := range s.Describe {
+		if !slices.Contains(s.Labels, label) {
+			add("%s: describe has %q, which is not one of the labels", at, label)
+		}
+	}
+	if s.Provider != "" && !slices.Contains(DecideProviders, s.Provider) {
+		add("%s: provider %q is not known; it must be one of %s", at, s.Provider, strings.Join(DecideProviders, ", "))
+	}
+	forbid(s, at, add, "decide", fieldsExcept("template", "labels", "confidence", "default", "tier", "provider", "describe"))
 }
 
 func validateAI(s *Step, at string, add func(string, ...any)) {
@@ -306,7 +352,12 @@ func validateAI(s *Step, at string, add func(string, ...any)) {
 	if s.Budget == nil || s.Budget.USD <= 0 {
 		add("%s: an ai step must declare a budget in usd", at)
 	}
-	forbid(s, at, add, "ai", fieldsExcept("prompt", "tier", "tools", "budget"))
+	for i, f := range s.Files {
+		if f.Connection == "" || !strings.HasPrefix(f.Path, "/") || f.Name == "" || strings.ContainsAny(f.Name, `/\`) {
+			add("%s: files[%d] needs a connection, a path starting with a slash, and a plain name", at, i)
+		}
+	}
+	forbid(s, at, add, "ai", fieldsExcept("prompt", "tier", "tools", "budget", "files"))
 }
 
 func validateDeterministic(s *Step, at string, opts ValidateOptions, add func(string, ...any)) {
@@ -378,6 +429,61 @@ func validateExternal(s *Step, at string, add func(string, ...any)) {
 	forbid(s, at, add, "external", fieldsExcept("connection", "call", "resume", "poll"))
 }
 
+// Hook tells an application about moments in a run. Weir posts to Path on
+// Connection each time one of the named things happens.
+type Hook struct {
+	// On lists what to report: an exact name such as "run.succeeded", a
+	// family such as "run.*", or "*" for everything.
+	On []string `yaml:"on" json:"on"`
+	// Connection is the named third party to tell.
+	Connection string `yaml:"connection" json:"connection"`
+	// Path is the path on that connection, starting with a slash.
+	Path string `yaml:"path" json:"path"`
+}
+
+var hookPattern = regexp.MustCompile(`^(\*|[a-z]+\.(\*|[a-z_]+))$`)
+
+// Matches reports whether the hook wants to hear about an event of this type.
+func (h Hook) Matches(eventType string) bool {
+	for _, on := range h.On {
+		if on == "*" || on == eventType {
+			return true
+		}
+		if family, ok := strings.CutSuffix(on, ".*"); ok && strings.HasPrefix(eventType, family+".") {
+			return true
+		}
+	}
+	return false
+}
+
+// Trigger starts a run when a matching event arrives.
+type Trigger struct {
+	// Event is the type of event to match, such as "treaty.uploaded".
+	Event string `yaml:"event" json:"event"`
+	// When, if set, must be true for the event to start a run. It sees the
+	// event as `event`.
+	When string `yaml:"when,omitempty" json:"when,omitempty"`
+	// Input builds the run's input from the event. Left out, the run's input
+	// is the event's data.
+	Input map[string]any `yaml:"input,omitempty" json:"input,omitempty"`
+}
+
+var eventPattern = regexp.MustCompile(`^[a-z][a-z0-9]*([._-][a-z0-9]+)*$`)
+
+// FileRef says where to fetch a document for an agent. Path and Name may hold
+// {{name}} placeholders, filled from the step's input.
+type FileRef struct {
+	// Connection is the named third party to fetch from.
+	Connection string `yaml:"connection" json:"connection"`
+	// Path is the path on that connection, starting with a slash.
+	Path string `yaml:"path" json:"path"`
+	// Name is what the agent sees the file called.
+	Name string `yaml:"name" json:"name"`
+}
+
+// DecideProviders are the names a decide step may give as its provider.
+var DecideProviders = []string{"jev", "gemini-decision", "claude", "codex"}
+
 // kindFields maps each kind-specific field to whether a step has set it.
 func kindFields(s *Step) map[string]bool {
 	return map[string]bool{
@@ -385,9 +491,12 @@ func kindFields(s *Step) map[string]bool {
 		"labels":     len(s.Labels) > 0,
 		"confidence": s.Confidence != 0,
 		"default":    s.Default != "",
+		"provider":   s.Provider != "",
+		"describe":   len(s.Describe) > 0,
 		"prompt":     s.Prompt != "",
 		"tier":       s.Tier != "",
 		"tools":      s.Tools != nil,
+		"files":      len(s.Files) > 0,
 		"budget":     s.Budget != nil,
 		"handler":    s.Handler != "",
 		"assign":     s.Assign != nil,
@@ -430,14 +539,8 @@ func forbid(s *Step, at string, add func(string, ...any), kind string, names []s
 // does not act on yet, so a publisher is never led to believe they are in force.
 func (d *Definition) Unsupported() []string {
 	var out []string
-	if d.Triggers != nil {
-		out = append(out, "triggers")
-	}
 	if d.Tiers != nil {
 		out = append(out, "tiers")
-	}
-	if d.Hooks != nil {
-		out = append(out, "hooks")
 	}
 	for _, s := range d.Steps {
 		if s.Hooks != nil {
@@ -446,8 +549,8 @@ func (d *Definition) Unsupported() []string {
 		if s.Sandbox != nil {
 			out = append(out, "steps."+s.ID+".sandbox")
 		}
-		if s.Tools != nil {
-			out = append(out, "steps."+s.ID+".tools")
+		if s.Tools != nil && len(s.Tools.Approve) > 0 {
+			out = append(out, "steps."+s.ID+".tools.approve")
 		}
 	}
 	return out

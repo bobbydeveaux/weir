@@ -18,6 +18,7 @@ import (
 //	label     its label, for a decide step
 //	outcome   its outcome, for a human step
 //	response  the reply to an external step's call, in poll.until
+//	event     the event being matched, in a trigger: event.type, event.id, event.source, event.data
 var exprEnv = sync.OnceValues(func() (*cel.Env, error) {
 	return cel.NewEnv(
 		cel.Variable("input", cel.DynType),
@@ -27,6 +28,7 @@ var exprEnv = sync.OnceValues(func() (*cel.Env, error) {
 		cel.Variable("label", cel.StringType),
 		cel.Variable("outcome", cel.StringType),
 		cel.Variable("response", cel.DynType),
+		cel.Variable("event", cel.DynType),
 	)
 })
 
@@ -67,6 +69,7 @@ type Scope struct {
 	Label    string
 	Outcome  string
 	Response any
+	Event    any
 }
 
 func (s Scope) vars() map[string]any {
@@ -79,7 +82,7 @@ func (s Scope) vars() map[string]any {
 	}
 	return map[string]any{
 		"input": s.Input, "steps": steps, "run": run, "output": s.Output,
-		"label": s.Label, "outcome": s.Outcome, "response": s.Response,
+		"label": s.Label, "outcome": s.Outcome, "response": s.Response, "event": s.Event,
 	}
 }
 

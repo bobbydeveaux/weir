@@ -321,11 +321,11 @@ func (e *Engine) Claim(ctx context.Context, kinds []string, workerID string, lea
 			Input: json.RawMessage(step.input), Requester: run.requester, IdempotencyKey: step.id}
 		switch st.Kind {
 		case spec.KindDecide:
-			w.Template, err = e.loadTemplate(ctx, tx, st.Template)
+			w.Template, err = e.loadTemplate(ctx, tx, run.workspace, st.Template)
 		case spec.KindAI:
-			w.Template, err = e.loadTemplate(ctx, tx, st.Prompt)
+			w.Template, err = e.loadTemplate(ctx, tx, run.workspace, st.Prompt)
 		case spec.KindExternal:
-			w.ConnectionURL, err = e.connectionURL(ctx, tx, st.Connection)
+			w.ConnectionURL, err = e.connectionURL(ctx, tx, run.workspace, st.Connection)
 		}
 		if err != nil {
 			return e.stepFailed(ctx, tx, run, step, failure("reference_missing", err.Error()))
@@ -401,6 +401,10 @@ type AICall struct {
 	CostEstimated   bool
 	Duration        time.Duration
 	Error           string
+	// Prompt is the text sent and Response the text that came back. They are
+	// kept so that a run can be audited; long ones are cut short.
+	Prompt   string
+	Response string
 }
 
 // Result is what an attempt produced.
@@ -526,10 +530,11 @@ func (e *Engine) recordCalls(ctx context.Context, tx pgx.Tx, attemptID string, c
 	for _, c := range calls {
 		_, err := tx.Exec(ctx, `
 			INSERT INTO ai_calls (attempt_id, runner, provider, model, template_key, template_version, prompt_hash,
-				tokens_in, tokens_out, cost_usd, cost_estimated, duration_ms, error)
-			VALUES ($1::uuid, $2, $3, $4, NULLIF($5, ''), NULLIF($6, 0), NULLIF($7, ''), $8, $9, $10::numeric, $11, $12, NULLIF($13, ''))`,
+				tokens_in, tokens_out, cost_usd, cost_estimated, duration_ms, error, prompt, response)
+			VALUES ($1::uuid, $2, $3, $4, NULLIF($5, ''), NULLIF($6, 0), NULLIF($7, ''), $8, $9, $10::numeric, $11, $12, NULLIF($13, ''),
+				NULLIF($14, ''), NULLIF($15, ''))`,
 			attemptID, c.Runner, c.Provider, c.Model, c.TemplateKey, c.TemplateVersion, c.PromptHash,
-			c.TokensIn, c.TokensOut, c.CostUSD, c.CostEstimated, int(c.Duration.Milliseconds()), c.Error)
+			c.TokensIn, c.TokensOut, c.CostUSD, c.CostEstimated, int(c.Duration.Milliseconds()), c.Error, clip(c.Prompt), clip(c.Response))
 		if err != nil {
 			return err
 		}
@@ -817,14 +822,21 @@ type Task struct {
 	User     string   `json:"user,omitempty"`
 	Outcomes []string `json:"outcomes"`
 	Level    int      `json:"escalation_level"`
+	// Namespace and Name say which workflow the task belongs to.
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
+	// Input is what the step was given: what the person is being asked about.
+	Input     json.RawMessage `json:"input"`
+	CreatedAt time.Time       `json:"created_at"`
 }
 
 // Tasks lists the human steps that are waiting.
 func (e *Engine) Tasks(ctx context.Context) ([]Task, error) {
 	rows, err := e.pool.Query(ctx, `
 		SELECT t.id::text, t.run_id::text, s.step_key, COALESCE(t.assignee_role, ''), COALESCE(t.assignee_user, ''),
-			t.outcomes, t.escalation_level
+			t.outcomes, t.escalation_level, d.namespace, d.name, s.input::text, t.created_at
 		FROM human_tasks t JOIN steps s ON s.id = t.step_id JOIN runs r ON r.id = t.run_id
+			JOIN definitions d ON d.id = r.definition_id
 		WHERE t.status = 'pending' AND r.workspace_id = $1::uuid ORDER BY t.created_at`, e.workspace)
 	if err != nil {
 		return nil, err
@@ -833,9 +845,11 @@ func (e *Engine) Tasks(ctx context.Context) ([]Task, error) {
 	var out []Task
 	for rows.Next() {
 		var t Task
-		if err := rows.Scan(&t.ID, &t.RunID, &t.Step, &t.Role, &t.User, &t.Outcomes, &t.Level); err != nil {
+		var input string
+		if err := rows.Scan(&t.ID, &t.RunID, &t.Step, &t.Role, &t.User, &t.Outcomes, &t.Level, &t.Namespace, &t.Name, &input, &t.CreatedAt); err != nil {
 			return nil, err
 		}
+		t.Input = json.RawMessage(input)
 		out = append(out, t)
 	}
 	return out, rows.Err()
@@ -843,7 +857,13 @@ func (e *Engine) Tasks(ctx context.Context) ([]Task, error) {
 
 // Decide records a person's decision on a waiting human step and moves the
 // run on. The engine, not the caller, enforces who may decide.
-func (e *Engine) Decide(ctx context.Context, taskID, actor, outcome, note string) error {
+func (e *Engine) Decide(ctx context.Context, taskID, actor, outcome, note string, data ...json.RawMessage) error {
+	var extra any
+	if len(data) > 0 && len(data[0]) > 0 {
+		if err := json.Unmarshal(data[0], &extra); err != nil {
+			return fmt.Errorf("the decision's data is not valid JSON: %w", err)
+		}
+	}
 	if actor == "" {
 		return fmt.Errorf("a decision needs an actor: %w", ErrNotAllowed)
 	}
@@ -852,8 +872,9 @@ func (e *Engine) Decide(ctx context.Context, taskID, actor, outcome, note string
 		var excluded, user *string
 		var outcomes []string
 		err := tx.QueryRow(ctx, `
-			SELECT attempt_id::text, status, excluded_actor, assignee_user, outcomes
-			FROM human_tasks WHERE id = $1::uuid FOR UPDATE`, taskID).Scan(&attemptID, &status, &excluded, &user, &outcomes)
+			SELECT t.attempt_id::text, t.status, t.excluded_actor, t.assignee_user, t.outcomes
+			FROM human_tasks t JOIN runs r ON r.id = t.run_id
+			WHERE t.id = $1::uuid AND r.workspace_id = $2::uuid FOR UPDATE OF t`, taskID, e.workspace).Scan(&attemptID, &status, &excluded, &user, &outcomes)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("task %s: %w", taskID, ErrNotFound)
 		}
@@ -886,7 +907,10 @@ func (e *Engine) Decide(ctx context.Context, taskID, actor, outcome, note string
 			WHERE id = $1::uuid`, taskID, outcome, actor, note); err != nil {
 			return err
 		}
-		output, _ := json.Marshal(map[string]any{"outcome": outcome, "decided_by": actor, "note": note})
+		// data is whatever the person supplied with the decision, such as the
+		// terms they edited before approving. Later steps read it as
+		// steps.<id>.output.data.
+		output, _ := json.Marshal(map[string]any{"outcome": outcome, "decided_by": actor, "note": note, "data": extra})
 		return e.completeTx(ctx, tx, att, Result{Output: output, Outcome: outcome, Actor: actor})
 	})
 }
@@ -1027,6 +1051,9 @@ func (e *Engine) Resume(ctx context.Context, runID, actor string, budgetUSD floa
 		if err != nil {
 			return err
 		}
+		if run.workspace != e.workspace {
+			return fmt.Errorf("run %s: %w", runID, ErrNotFound)
+		}
 		if run.status != "blocked" {
 			return ErrNotBlocked
 		}
@@ -1102,5 +1129,53 @@ func (e *Engine) Resume(ctx context.Context, runID, actor string, budgetUSD floa
 			return err
 		}
 		return e.advance(ctx, tx, run, st, scope)
+	})
+}
+
+// clip cuts a stored prompt or reply to a size that is safe to keep.
+func clip(text string) string {
+	const most = 200_000
+	if len(text) <= most {
+		return text
+	}
+	return text[:most] + fmt.Sprintf("\n… cut short; %d bytes in all", len(text))
+}
+
+// Cancel ends a run that has not finished. Nothing more of it will run: its
+// live attempts are given up, its open human tasks are closed, and a worker
+// still holding one of its tokens will find the token stale. It is how a
+// person closes a run that is blocked and cannot be put right.
+//
+// Steps that already succeeded are not undone.
+func (e *Engine) Cancel(ctx context.Context, runID, actor, reason string) error {
+	return e.inTx(ctx, func(tx pgx.Tx) error {
+		run, err := e.loadRun(ctx, tx, runID)
+		if err != nil || run.workspace != e.workspace {
+			return fmt.Errorf("run %s: %w", runID, ErrNotFound)
+		}
+		switch run.status {
+		case "succeeded", "failed", "cancelled":
+			return fmt.Errorf("the run has already %s: %w", run.status, ErrNotAllowed)
+		}
+		for _, q := range []string{
+			`UPDATE attempts SET status = 'abandoned', finished_at = now(), lease_until = NULL
+				WHERE status IN ('running', 'waiting') AND step_id IN (SELECT id FROM steps WHERE run_id = $1::uuid)`,
+			`UPDATE human_tasks SET status = 'expired' WHERE run_id = $1::uuid AND status = 'pending'`,
+			`UPDATE timers SET fired_at = now() WHERE run_id = $1::uuid AND fired_at IS NULL`,
+			`UPDATE steps SET status = 'cancelled', finished_at = now()
+				WHERE run_id = $1::uuid AND status IN ('runnable', 'running', 'waiting')`,
+		} {
+			if _, err := tx.Exec(ctx, q, run.id); err != nil {
+				return err
+			}
+		}
+		f := Failure{Type: "cancelled", Message: reason, Actor: actor}
+		raw, _ := json.Marshal(f)
+		run.status = "cancelled"
+		if _, err := tx.Exec(ctx, `UPDATE runs SET status = 'cancelled', error = $2::jsonb, finished_at = now() WHERE id = $1::uuid`,
+			run.id, string(raw)); err != nil {
+			return err
+		}
+		return e.event(ctx, tx, run, nil, nil, "run.cancelled", actor, f)
 	})
 }

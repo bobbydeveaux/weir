@@ -1,0 +1,132 @@
+<script lang="ts">
+	import { api } from '#lib/api.ts';
+	import ErrorNote from '#lib/components/ErrorNote.svelte';
+	import Json from '#lib/components/Json.svelte';
+	import Time from '#lib/components/Time.svelte';
+	import { shortId } from '#lib/format.ts';
+	import { useQuery } from '#lib/query.svelte.ts';
+
+	const triggers = useQuery(() => api.triggers(), { keep: true, refresh: () => 15000 });
+	const events = useQuery(() => api.events(100), { keep: true, refresh: () => 3000 });
+
+	// Triggers grouped by the event that sets them off.
+	const byEvent = $derived.by(() => {
+		const groups = new Map<string, NonNullable<typeof triggers.data>>();
+		for (const t of triggers.data ?? []) {
+			groups.set(t.event, [...(groups.get(t.event) ?? []), t]);
+		}
+		return [...groups.entries()];
+	});
+</script>
+
+<svelte:head><title>Events · Weir console</title></svelte:head>
+
+<div class="page">
+	<div class="page-head">
+		<div>
+			<h1>Events</h1>
+			<p class="sub">
+				An application reports what happened with <code class="mono">POST /v1/events</code>. Weir starts a run of every workflow
+				whose trigger matches. The application never names a workflow.
+			</p>
+		</div>
+	</div>
+
+	<section class="panel">
+		<div class="panel-head">
+			<h2>Triggers <span class="n">{triggers.data?.length ?? 0}</span></h2>
+			<span class="muted small">Which events start which workflows, from each workflow's live version</span>
+		</div>
+		{#if triggers.error && !triggers.data}
+			<div class="panel-body"><ErrorNote error={triggers.error} what="triggers" /></div>
+		{:else if !triggers.data}
+			<div class="panel-body"><div class="skeleton" style="height: 50px"></div></div>
+		{:else if byEvent.length === 0}
+			<div class="empty">
+				<strong>No workflow is waiting for an event</strong>
+				Add a <code class="mono">triggers:</code> block to a workflow, with the <code class="mono">event</code> it should start on.
+			</div>
+		{:else}
+			<div class="table-wrap">
+				<table class="table">
+					<thead>
+						<tr><th>When this happens</th><th>This starts</th><th>Only if</th></tr>
+					</thead>
+					<tbody>
+						{#each byEvent as [event, rows] (event)}
+							{#each rows as t, i (t.namespace + '/' + t.name + i)}
+								<tr>
+									<td class="mono">{#if i === 0}<b>{event}</b>{/if}</td>
+									<td class="mono">
+										<a href="/workflows/{t.namespace}/{t.name}">{t.namespace}/<b>{t.name}</b></a>
+										<span class="tag">v{t.version}</span>
+									</td>
+									<td class="mono">{t.when ?? 'always'}</td>
+								</tr>
+							{/each}
+						{/each}
+					</tbody>
+				</table>
+			</div>
+		{/if}
+	</section>
+
+	<section class="panel">
+		<div class="panel-head">
+			<h2>Received <span class="n">{events.data?.length ?? 0}</span></h2>
+			<span class="muted small">Newest first</span>
+		</div>
+		{#if events.error && !events.data}
+			<div class="panel-body"><ErrorNote error={events.error} what="events" /></div>
+		{:else if !events.data}
+			<div class="panel-body"><div class="skeleton" style="height: 80px"></div></div>
+		{:else if events.data.length === 0}
+			<div class="empty"><strong>No events yet</strong>Nothing has been reported to this workspace.</div>
+		{:else}
+			<div class="table-wrap">
+				<table class="table">
+					<thead>
+						<tr><th>Event</th><th>From</th><th>Received</th><th>Started</th><th>Data</th></tr>
+					</thead>
+					<tbody>
+						{#each events.data as e (e.id)}
+							<tr>
+								<td class="mono"><b>{e.type}</b>{#if e.key}<div class="muted small">{e.key}</div>{/if}</td>
+								<td>{e.sent_by}{#if e.source}<div class="muted small mono">{e.source}</div>{/if}</td>
+								<td><Time at={e.received_at} /></td>
+								<td>
+									{#each e.runs ?? [] as r (r.namespace + '/' + r.name)}
+										<div class="mono">
+											{#if r.run_id}
+												<a href="/runs/{r.run_id}">{r.namespace}/{r.name} · {shortId(r.run_id)}</a>
+											{:else}
+												<span class="tag write" title={r.error}>{r.namespace}/{r.name} could not start</span>
+											{/if}
+										</div>
+									{:else}
+										<span class="muted">nothing: no trigger matched</span>
+									{/each}
+								</td>
+								<td class="data"><Json value={e.data} max={90} /></td>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
+		{/if}
+	</section>
+</div>
+
+<style>
+	.page-head code {
+		font-size: 12px;
+	}
+
+	td.data {
+		max-width: 380px;
+	}
+
+	td a {
+		color: inherit;
+	}
+</style>
