@@ -28,7 +28,7 @@ A real workflow has run end to end from the command line with the Claude command
 | 13 API and command line | Mostly done | Sign-in for people (the console takes a key today); a published API description; logs and metrics; the newer endpoints on the command line |
 | 14 Examples and conformance | Started | Two more examples; tests for all three; the conformance suite. A real application (agent-demo) runs on Weir, which the plan did not ask for |
 | 15 Release | Started | The repository is public. No tagged version yet |
-| 16 Pipes | Started | Signed webhooks come in as events. Left: the package format, the GitHub and Slack Pipes' tools, and connecting from the console |
+| 16 Pipes | Started | Signed webhooks come in as events, and the GitHub tools are in. Left: the package format, Slack, a real write to GitHub, and connecting from the console |
 | 17 Running in the cloud | Not started | Weir does not idle at zero yet |
 | 18 Learning and authoring | Not started |  |
 
@@ -289,7 +289,7 @@ A Pipe is one package per third party: its connection, the events it sends in, t
 - [ ] The package format for a Pipe, and installing one into a workspace (#50)
 - [x] Inbound webhooks from a third party, with the sender's signature checked, turned into events: `POST /v1/webhooks/{workspace}/{connection}`, GitHub's scheme and a general HMAC-SHA256 one, with the delivery id kept so that a repeat starts nothing. Tested with requests signed in the tests; not yet received from GitHub itself (#51)
 - [ ] Refuse a webhook that is replayed long after it was sent: a signed timestamp where the sender provides one, and a limit on how old a delivery may be (#70)
-- [ ] The GitHub Pipe: webhooks in, and tools to read a repository, open a branch, commit and open a pull request (#52)
+- [x] The GitHub Pipe's two halves: webhooks in (above), and tools to read a file, list a directory, read a pull request, create a branch, write a file, open a pull request and comment. A connection can be pinned to one repository, and the default branch cannot be written to. The read tools are proven against the real GitHub; the write tools against a stand-in only (#52)
 - [ ] The Slack Pipe: messages in, and a tool to post (#53)
 - [ ] Connecting a Pipe from the console by signing in to the third party (#54)
 

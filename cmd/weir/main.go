@@ -169,6 +169,7 @@ func (a *app) engine() (*engine.Engine, config.Config, func(), error) {
 	// Refuse workflows that name a handler or a tool no worker can provide.
 	a.reg = worker.NewRegistry()
 	worker.RegisterHTTPTools(a.reg, eng, nil)
+	worker.RegisterGitHubTools(a.reg, eng, nil)
 	eng.HandlerExists, eng.ToolClass = a.reg.Exists, a.reg.ToolClass
 	return eng, cfg, pool.Close, nil
 }
