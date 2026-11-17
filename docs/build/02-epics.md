@@ -67,6 +67,8 @@ A real workflow has run end to end from the command line with the Claude command
 | The expression language | CEL through `cel-go`, so expressions can be type-checked against step schemas at publish time. Proposed, not yet confirmed |
 | Licence | Apache 2.0. Proposed, not yet confirmed |
 | Go module path | `github.com/bobbydeveaux/weir` |
+| Every model call goes through Weir | A step that calls a model is an `ai` or `decide` step, so that the prompt, the model, the tools, the budget and the record are Weir's. Where the agent runs is a setting: on the worker today, somewhere isolated later (#23) |
+| Agents that work on a repository | Weir does it, rather than leaving each application to write its own harness, because the harness is the security-critical part. The engine stays general: it prepares a working directory through a registered handler, gives the agent a sandboxed shell, and keeps what changed. Everything that knows about git is in the GitHub Pipe, as deterministic code: check out before, commit from a fresh clone after. An agent never holds a token that can write |
 
 ## Order of work
 
@@ -229,6 +231,9 @@ How work is claimed, held and returned.
 - [x] The tool proxy, exposed to the command line as its only MCP server: an allow-list per step, with read and write classes (the `approve` class is the next item)
 - [x] Tools from the server's registry and from a workspace's MCP connections exposed to agents
 - [x] An `ai` step with `writes:` can produce files, kept in the file store. A later `ai` step is given them with `files: [{step: …}]`, expressions see `steps.<id>.files`, and the API lists and downloads them. Proven with a real agent on the Claude command line, which was also refused a write outside its directory. Not built: the Codex adapter cannot write files, and nothing removes old files (#77)
+- [x] An `ai` step with `shell:` gives its agent a shell inside the command line's sandbox: it writes only in the step's working directory, reaches only the hosts the step lists, and cannot read the secrets directory or credential directories. Off unless `WEIR_AGENT_SHELL=on`; a worker with no sandbox refuses the step. Proven with a real agent on macOS; Linux has not been run. For one team running its own Weir: on a shared Weir the agent must run somewhere isolated (#23) (#80)
+- [ ] A step's working directory is prepared by a registered handler before its agent runs, and the files the agent changed are kept in the file store (#81)
+- [ ] Paths an agent may not change, enforced by Weir on what the agent changed: `sandbox.deny_paths`, an allow-list for steps that may only write tests, and paths that are always forbidden (#82)
 - [ ] A write under `approve` parks until a person approves that exact call (#32)
 - [ ] Tool output marked as data, and a tainted run blocked from writing to a different third party (#33)
 - [x] Documents for agents (`files` on an `ai` step), MCP servers as a source of tools, data on a decision, prompt and reply kept per model call
@@ -274,6 +279,7 @@ How work is claimed, held and returned.
 - [x] Crash tests: kill a worker mid-step; send a completion twice; let a lease expire
 - [ ] A quickstart that gets a new reader from clone to a finished run (#47)
 - [x] First application on Weir: agent-demo, proven end to end locally. See [agent-demo on Weir](04-agent-demo-on-weir.md)
+- [ ] A second, live application on Weir: a governed fix-the-vulnerability workflow, with every model call an `ai` step and every gate a `human` step. Needs the shell, the prepared working directory, forbidden paths, and the GitHub Pipe's checkout and commit (#86)
 
 ### 15. Release
 
@@ -291,6 +297,9 @@ A Pipe is one package per third party: its connection, the events it sends in, t
 - [x] Inbound webhooks from a third party, with the sender's signature checked, turned into events: `POST /v1/webhooks/{workspace}/{connection}`, GitHub's scheme and a general HMAC-SHA256 one, with the delivery id kept so that a repeat starts nothing. Tested with requests signed in the tests; not yet received from GitHub itself (#51)
 - [ ] Refuse a webhook that is replayed long after it was sent: a signed timestamp where the sender provides one, and a limit on how old a delivery may be (#70)
 - [x] The GitHub Pipe's two halves: webhooks in (above), and tools to read a file, list a directory, read a pull request, create a branch, write a file, open a pull request and comment. A connection can be pinned to one repository, and the default branch cannot be written to. The read tools are proven against the real GitHub; the write tools against a stand-in only (#52)
+- [ ] GitHub Pipe: sign in as a GitHub App, minting a short-lived token for one repository with the least permission the action needs (#83)
+- [ ] GitHub Pipe: check out a repository into an agent's working directory, with a read-only token the agent cannot read (#84)
+- [ ] GitHub Pipe: commit what an agent changed from a fresh clone and open a pull request, with a write token minted only after the agent has exited (#85)
 - [ ] The Slack Pipe: messages in, and a tool to post (#53)
 - [ ] Connecting a Pipe from the console by signing in to the third party (#54)
 

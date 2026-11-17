@@ -217,6 +217,12 @@ func (a *app) serve([]string) error {
 			models[tier] = model
 		}
 		claude := &runner.Claude{Models: models, ModelPrefix: a.getenv("WEIR_CLAUDE_MODEL_PREFIX"), Env: passed}
+		// A shell for agents is off unless asked for. When it is on, it can
+		// never read the directory that holds workspaces' secrets.
+		claude.Shell = a.getenv("WEIR_AGENT_SHELL") == "on"
+		if dir := a.getenv("WEIR_SECRETS_DIR"); dir != "" {
+			claude.Hidden = append(claude.Hidden, dir)
+		}
 		codex := &runner.Codex{Model: a.getenv("WEIR_CODEX_MODEL"), Env: passed}
 		// A decide step goes to the provider its workflow names. Steps that
 		// name none use Jev when it has a key, and Claude's small model otherwise.

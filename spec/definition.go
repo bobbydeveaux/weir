@@ -104,6 +104,8 @@ type Step struct {
 	// Writes lets the agent produce files, which Weir keeps for later steps
 	// and for the application.
 	Writes *Writes `yaml:"writes,omitempty" json:"writes,omitempty"`
+	// Shell gives the agent a sandboxed shell.
+	Shell  *Shell  `yaml:"shell,omitempty" json:"shell,omitempty"`
 	Budget *Budget `yaml:"budget,omitempty" json:"budget,omitempty"`
 
 	// deterministic
@@ -407,7 +409,17 @@ func validateAI(s *Step, at string, add func(string, ...any)) {
 			add("%s: writes.max_megabytes must be between 1 and %d", at, MaxWriteMegabytes)
 		}
 	}
-	forbid(s, at, add, "ai", fieldsExcept("prompt", "tier", "tools", "budget", "files", "writes"))
+	if s.Shell != nil {
+		if len(s.Shell.Hosts) > MaxShellHosts {
+			add("%s: shell.hosts lists more than %d hosts", at, MaxShellHosts)
+		}
+		for _, h := range s.Shell.Hosts {
+			if !hostPattern.MatchString(h) {
+				add("%s: shell.hosts: %q is not a host name, such as proxy.golang.org or *.githubusercontent.com", at, h)
+			}
+		}
+	}
+	forbid(s, at, add, "ai", fieldsExcept("prompt", "tier", "tools", "budget", "files", "writes", "shell"))
 }
 
 func validateDeterministic(s *Step, at string, opts ValidateOptions, add func(string, ...any)) {
@@ -529,6 +541,19 @@ type Trigger struct {
 
 var eventPattern = regexp.MustCompile(`^[a-z][a-z0-9]*([._-][a-z0-9]+)*$`)
 
+// Shell gives an agent a shell. It runs in a sandbox: it can write only in
+// the step's working directory, and reach only the hosts listed.
+type Shell struct {
+	// Hosts are the only hosts the shell may connect to: a name, or a name
+	// beginning "*." for every host under it. None means no network at all.
+	Hosts []string `yaml:"hosts,omitempty" json:"hosts,omitempty"`
+}
+
+// MaxShellHosts is the most hosts a step's shell may list.
+const MaxShellHosts = 50
+
+var hostPattern = regexp.MustCompile(`^(\*\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$`)
+
 // Writes says how much an agent may write. A zero limit means the default.
 type Writes struct {
 	// MaxFiles is the most files the agent may produce.
@@ -590,6 +615,7 @@ func kindFields(s *Step) map[string]bool {
 		"tools":      s.Tools != nil,
 		"files":      len(s.Files) > 0,
 		"writes":     s.Writes != nil,
+		"shell":      s.Shell != nil,
 		"budget":     s.Budget != nil,
 		"handler":    s.Handler != "",
 		"assign":     s.Assign != nil,
