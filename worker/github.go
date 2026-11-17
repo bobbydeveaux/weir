@@ -167,6 +167,31 @@ func contentPath(path string) (string, error) {
 	return strings.Join(parts, "/"), nil
 }
 
+// openPull opens a pull request from head into base. If one is already open
+// from that branch it is returned instead, with opened false, so that asking
+// twice is safe.
+func (g *github) openPull(ctx context.Context, head, base, title, body string) (number int, link string, opened bool, err error) {
+	type pull struct {
+		Number int    `json:"number"`
+		URL    string `json:"html_url"`
+	}
+	var pr pull
+	status, err := g.do(ctx, http.MethodPost, "/pulls", map[string]string{"head": head, "base": base, "title": title, "body": body}, &pr)
+	if status == http.StatusUnprocessableEntity {
+		// Most often: one is already open from this branch. Find it.
+		owner, _, _ := strings.Cut(g.repo, "/")
+		var open []pull
+		q := "/pulls?state=open&head=" + url.QueryEscape(owner+":"+head)
+		if _, findErr := g.do(ctx, http.MethodGet, q, nil, &open); findErr == nil && len(open) > 0 {
+			return open[0].Number, open[0].URL, false, nil
+		}
+	}
+	if err != nil {
+		return 0, "", false, err
+	}
+	return pr.Number, pr.URL, true, nil
+}
+
 func (g *github) defaultBranch(ctx context.Context) (string, error) {
 	var repo struct {
 		DefaultBranch string `json:"default_branch"`
@@ -424,25 +449,11 @@ func RegisterGitHubTools(reg *Registry, eng *engine.Engine, client *http.Client)
 					return nil, err
 				}
 			}
-			type pull struct {
-				Number int    `json:"number"`
-				URL    string `json:"html_url"`
-			}
-			var pr pull
-			status, err := g.do(ctx, http.MethodPost, "/pulls", map[string]string{"head": in.Head, "base": base, "title": in.Title, "body": in.Body}, &pr)
-			if status == http.StatusUnprocessableEntity {
-				// Most often: one is already open from this branch. Find it.
-				owner, _, _ := strings.Cut(g.repo, "/")
-				var open []pull
-				q := "/pulls?state=open&head=" + url.QueryEscape(owner+":"+in.Head)
-				if _, findErr := g.do(ctx, http.MethodGet, q, nil, &open); findErr == nil && len(open) > 0 {
-					return map[string]any{"number": open[0].Number, "url": open[0].URL, "opened": false}, nil
-				}
-			}
+			number, link, opened, err := g.openPull(ctx, in.Head, base, in.Title, in.Body)
 			if err != nil {
 				return nil, err
 			}
-			return map[string]any{"number": pr.Number, "url": pr.URL, "opened": true}, nil
+			return map[string]any{"number": number, "url": link, "opened": opened}, nil
 		})
 
 	tool("github.comment", engine.ToolWrite, "Add a comment to an issue or a pull request.",

@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/bobbydeveaux/weir/engine"
 	"github.com/bobbydeveaux/weir/internal/secrets"
@@ -44,6 +45,14 @@ var githubRemote = func(api, repo string) (string, error) {
 		return strings.TrimSuffix(api, "/api/v3") + "/" + repo + ".git", nil
 	}
 	return "", fmt.Errorf("cannot tell where to clone from for the API address %s", api)
+}
+
+// remote returns where git clones repo from.
+func (r *Registry) remote(api, repo string) (string, error) {
+	if r.GitRemote != nil {
+		return r.GitRemote(api, repo)
+	}
+	return githubRemote(api, repo)
 }
 
 // gitToken returns a token for one repository: minted for a GitHub App, or
@@ -117,6 +126,9 @@ const maxCheckoutDepth = 1000
 // "github") and "depth" (default 1) from the step's "with". A connection
 // pinned to one repository needs no "repo".
 func RegisterGitHubCheckout(reg *Registry, eng *engine.Engine, client *http.Client) {
+	if client == nil {
+		client = &http.Client{Timeout: 30 * time.Second, CheckRedirect: secrets.SameHost}
+	}
 	reg.RegisterWorkspace("github.checkout", func(ctx context.Context, w Workspace) (runner.Prepared, error) {
 		var in struct {
 			Repo string `json:"repo"`
@@ -141,7 +153,7 @@ func RegisterGitHubCheckout(reg *Registry, eng *engine.Engine, client *http.Clie
 		if err != nil {
 			return runner.Prepared{}, err
 		}
-		remote, err := githubRemote(g.api, g.repo)
+		remote, err := reg.remote(g.api, g.repo)
 		if err != nil {
 			return runner.Prepared{}, err
 		}
