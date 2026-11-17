@@ -67,7 +67,8 @@ A real workflow has run end to end from the command line with the Claude command
 | The expression language | CEL through `cel-go`, so expressions can be type-checked against step schemas at publish time. Proposed, not yet confirmed |
 | Licence | Apache 2.0. Proposed, not yet confirmed |
 | Go module path | `github.com/bobbydeveaux/weir` |
-| Every model call goes through Weir | A step that calls a model is an `ai` or `decide` step, so that the prompt, the model, the tools, the budget and the record are Weir's. Where the agent runs is a setting: on the worker today, somewhere isolated later (#23) |
+| Every model call goes through Weir | A step that calls a model is an `ai` or `decide` step, so that the prompt, the model, the tools, the budget and the record are Weir's. Where the agent runs is a setting |
+| Where an agent runs | In a container of its own, with every tool and nothing in reach worth stealing. That is the baseline for an agent that does real work, not an extra. The container talks only to Weir's API with the one-time token for its step; what it may reach on the network is the platform's to decide. Running beside the worker, inside a sandbox, stays for simple agents and for a laptop with no Docker |
 | Agents that work on a repository | Weir does it, rather than leaving each application to write its own harness, because the harness is the security-critical part. The engine stays general: it prepares a working directory through a registered handler, gives the agent a sandboxed shell, and keeps what changed. Everything that knows about git is in the GitHub Pipe, as deterministic code: check out before, commit from a fresh clone after. An agent never holds a token that can write |
 
 ## Order of work
@@ -211,7 +212,6 @@ How work is claimed, held and returned.
 - [ ] A live call to Jev and to Gemini Decisions (both are tested against stand-in servers; neither has been run with a real key) (#21)
 - [ ] Gemini adapter (the command line, for `ai` steps) (#22)
 - [x] Claude on Bedrock or Vertex AI on the machine's cloud identity, and through an AI gateway, by letting named variables through to the command line; tier models and a model prefix as settings. Tested for what reaches the agent; not yet run against a real account
-- [ ] A runner that hands an `ai` step to an agent hosted elsewhere (AgentCore, Fargate, Cloud Run), as an earlier project of the author's has (#23)
 - [ ] Workload identity as a way to sign in (Google Workload Identity Federation, AWS IAM roles, Azure managed identity), beside the OAuth token and the API key. See [Agent runners](03-agent-runners.md) (#24)
 - [ ] An `api` runner for `ai` steps with its own tool loop, with Vertex AI, Bedrock and Azure AI Foundry behind it (#25)
 - [ ] Provider settings per workspace (#26)
@@ -231,6 +231,8 @@ How work is claimed, held and returned.
 - [x] The tool proxy, exposed to the command line as its only MCP server: an allow-list per step, with read and write classes (the `approve` class is the next item)
 - [x] Tools from the server's registry and from a workspace's MCP connections exposed to agents
 - [x] An `ai` step with `writes:` can produce files, kept in the file store. A later `ai` step is given them with `files: [{step: …}]`, expressions see `steps.<id>.files`, and the API lists and downloads them. Proven with a real agent on the Claude command line, which was also refused a write outside its directory. Not built: the Codex adapter cannot write files, and nothing removes old files (#77)
+- [x] An agent can run in a container of its own (`WEIR_AGENT_RUNNER=docker`): the worker prepares its directory, the container fetches its job and directory from the API with the step's one-time token, runs with every tool, and sends back its output, cost and changed files, all of which Weir checks again. It holds no Weir secret and no third party's credential. A real container has been started by Weir and reported back; it has **not yet run with a real model inside**, for want of a token on the test machine. The cost is the container's word until #95 (#23)
+- [ ] Send an isolated agent's model calls through Weir, so that its container holds no model credential and Weir counts the cost itself (#95)
 - [x] An `ai` step with `shell:` gives its agent a shell inside the command line's sandbox: it writes only in the step's working directory, reaches only the hosts the step lists, and cannot read the secrets directory or credential directories. Off unless `WEIR_AGENT_SHELL=on`; a worker with no sandbox refuses the step. Proven with a real agent on macOS; Linux has not been run. For one team running its own Weir: on a shared Weir the agent must run somewhere isolated (#23) (#80)
 - [x] An `ai` step with `workspace:` has its working directory filled by registered code before its agent runs. Weir records the directory first and compares afterwards, so what the agent added, changed or deleted is kept in the file store without asking the agent or running anything in the directory. Paths to leave out are fixed before the agent starts, and `.git` is never read back. Proven with a real agent, with a shell, on macOS. Not built: no handler ships yet (#84), and whether a file is executable is not recorded (#81)
 - [x] Paths an agent may not change, checked by Weir on what the agent changed after it exits: `writes.only` for a step that may write tests and nothing else, `writes.never`, and paths protected unless a step says otherwise (`.git/`, `.github/workflows/`, `.claude/`, `CLAUDE.md`, `AGENTS.md`). One forbidden change fails the step and keeps nothing. The rules live under `writes`, not under `sandbox.deny_paths`, which still parses and is still reported as not acted on (#82)
@@ -313,6 +315,8 @@ Weir is designed to idle at zero. Today a worker polls, so one instance must sta
 - [ ] Timers and retries fired by a scheduler calling Weir (Cloud Scheduler or Cloud Tasks first) (#57)
 - [ ] Long agent steps run off the request, so that a platform's request time limit does not cut them short (#58)
 - [ ] A guide to running on Cloud Run with Secret Manager, and the same for AWS and Azure (#59)
+- [ ] Launch an agent's container as a Cloud Run job, with a service account that can call the model and nothing else (#93)
+- [ ] Launch an agent's container on AWS: a Fargate task, and Bedrock AgentCore (#94)
 - [ ] Secrets created at run time for a hosted service: kept in Postgres, encrypted with a key held by the cloud (#60)
 - [ ] A Helm chart, for those who already run Kubernetes (#61)
 

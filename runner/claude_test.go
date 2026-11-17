@@ -460,3 +460,34 @@ func TestAnAgentsShellIsSandboxedLive(t *testing.T) {
 		t.Errorf("the shell saw the worker's environment: %+v", got["environment"])
 	}
 }
+
+func TestAnAgentInItsOwnContainerIsGivenEveryTool(t *testing.T) {
+	var args []string
+	var dir string
+	c := &Claude{Unrestricted: true, run: func(_ context.Context, _ string, a, _ []string, _, d string) ([]byte, error) {
+		args, dir = a, d
+		_ = os.WriteFile(filepath.Join(d, "main.go"), []byte("package main // fixed\n"), 0o600)
+		return []byte(`{"result":"ok","structured_output":{"ok":true},"total_cost_usd":0.01}`), nil
+	}}
+	res, err := c.Run(context.Background(), RunRequest{System: "Be brief.", Prompt: "fix it", Schema: json.RawMessage(`{"type":"object"}`),
+		Workspace: &Workspace{Prepare: repo}, Writes: &WriteLimit{MaxFiles: 10, MaxBytes: 1 << 20}})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--dangerously-skip-permissions") || strings.Contains(joined, "--tools") ||
+		strings.Contains(joined, "--permission-mode") || strings.Contains(joined, "sandbox") {
+		t.Errorf("an unrestricted agent was restricted: %s", joined)
+	}
+	// It keeps the command line's own guidance, and is told where it is working.
+	if !strings.Contains(joined, "--append-system-prompt Be brief.") || !strings.Contains(joined, dir) {
+		t.Errorf("args = %s", joined)
+	}
+	if len(res.Files) != 1 || res.Files[0].Name != "main.go" {
+		t.Errorf("changes = %+v", res.Files)
+	}
+	// Still no user or project settings, and no MCP servers but Weir's.
+	if !strings.Contains(joined, "--strict-mcp-config") || !strings.Contains(joined, "--setting-sources") {
+		t.Errorf("args = %s", joined)
+	}
+}

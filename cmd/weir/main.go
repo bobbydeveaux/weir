@@ -17,6 +17,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/bobbydeveaux/weir/agent"
 	"github.com/bobbydeveaux/weir/api"
 	"github.com/bobbydeveaux/weir/blob"
 	"github.com/bobbydeveaux/weir/engine"
@@ -109,7 +110,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	commands := map[string]func([]string) error{
 		"migrate": a.migrate, "serve": a.serve, "publish": a.publish, "template": a.template,
 		"connection": a.connection, "run": a.start, "status": a.status, "tasks": a.tasks,
-		"approve": a.approve, "resume": a.resume, "mcp": a.mcp, "key": a.key,
+		"approve": a.approve, "resume": a.resume, "mcp": a.mcp, "agent": a.agent, "key": a.key,
 	}
 	switch args[0] {
 	case "version":
@@ -205,6 +206,10 @@ func (a *app) serve([]string) error {
 
 	var r runner.Runner
 	decideWith := "scripted answers"
+	// modelFor chooses a step's model, and agentEnv names what an agent's
+	// container is given, when agents run in containers of their own.
+	var modelFor func(tier, model string) string
+	agentEnv := []string{"CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"}
 	switch cfg.Runner {
 	case config.RunnerCLI:
 		// Claude runs steps by default. A step with `tier: codex` goes to Codex,
@@ -219,6 +224,7 @@ func (a *app) serve([]string) error {
 			models[tier] = model
 		}
 		claude := &runner.Claude{Models: models, ModelPrefix: a.getenv("WEIR_CLAUDE_MODEL_PREFIX"), Env: passed}
+		modelFor, agentEnv = claude.ModelFor, append(agentEnv, passed...)
 		// A shell for agents is off unless asked for. When it is on, it can
 		// never read the directory that holds workspaces' secrets.
 		claude.Shell = a.getenv("WEIR_AGENT_SHELL") == "on"
@@ -265,6 +271,28 @@ func (a *app) serve([]string) error {
 	w := &worker.Worker{Engine: eng, Runner: r, Handlers: a.reg, ID: "weir-serve", CallbackURL: public,
 		ToolURL: "http://localhost" + cfg.HTTPAddr}
 
+	// Where agents run. Beside this worker unless a launcher is named, in
+	// which case each runs in a container of its own, with every tool and
+	// nothing of Weir's but the token for its own step.
+	agents := "beside this worker"
+	switch where := a.getenv("WEIR_AGENT_RUNNER"); where {
+	case "", "inline":
+	case "docker":
+		image := a.getenv("WEIR_AGENT_IMAGE")
+		if image == "" {
+			return errors.New("WEIR_AGENT_RUNNER is docker, so WEIR_AGENT_IMAGE must name the image agents run in")
+		}
+		launcher := &worker.Docker{Image: image, Env: agentEnv, Args: strings.Fields(a.getenv("WEIR_AGENT_DOCKER_ARGS"))}
+		w.Launcher, w.Model = launcher, modelFor
+		// A container reaches a Weir on this machine by this name.
+		if w.AgentURL = a.getenv("WEIR_AGENT_URL"); w.AgentURL == "" {
+			w.AgentURL = "http://host.docker.internal" + cfg.HTTPAddr
+		}
+		agents = "in " + launcher.Describe()
+	default:
+		return fmt.Errorf("WEIR_AGENT_RUNNER is %q; it must be inline or docker", where)
+	}
+
 	// Files are kept in Postgres unless a bucket is named.
 	if address := a.getenv("WEIR_BLOB_URL"); address != "" {
 		if openBucket == nil {
@@ -300,6 +328,7 @@ func (a *app) serve([]string) error {
 	fmt.Fprintf(a.out, "weir is listening on %s with the %s runner; decisions use %s unless a step names a provider\n", cfg.HTTPAddr, cfg.Runner, decideWith)
 	fmt.Fprintln(a.out, access)
 	fmt.Fprintf(a.out, "files are kept in %s\n", eng.Files.Describe())
+	fmt.Fprintf(a.out, "agents run %s\n", agents)
 
 	select {
 	case <-a.ctx.Done():
@@ -309,6 +338,25 @@ func (a *app) serve([]string) error {
 	defer cancel()
 	_ = srv.Shutdown(shutdown)
 	return err
+}
+
+// agent runs one agent's job and exits. It is started inside an agent's own
+// container, not by a person. It talks only to Weir's API, with the token for
+// its own step, and gives the agent every tool: the container is the boundary.
+func (a *app) agent([]string) error {
+	url, token := a.getenv("WEIR_URL"), a.getenv("WEIR_AGENT_TOKEN")
+	if url == "" || token == "" {
+		return errors.New("agent is started in an agent's container, which is given WEIR_URL and WEIR_AGENT_TOKEN")
+	}
+	// The agent's command line is given this container's environment, apart
+	// from Weir's own variables. There is nothing else here to keep from it.
+	var pass []string
+	for _, kv := range os.Environ() {
+		if name, _, _ := strings.Cut(kv, "="); !strings.HasPrefix(name, "WEIR_") {
+			pass = append(pass, name)
+		}
+	}
+	return agent.Run(a.ctx, &agent.Client{BaseURL: url, Token: token}, &runner.Claude{Unrestricted: true, Env: pass})
 }
 
 // mcp is started by an agent's command line, not by a person. It serves MCP

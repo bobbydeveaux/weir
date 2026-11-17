@@ -54,7 +54,7 @@ The full list, with an issue for each item, is [docs/build/02-epics.md](docs/bui
 - **Roles on approvals.** A human step records the role it is for, but does not yet check that the person deciding holds it. Only "not the requester" and a named user are enforced.
 - **Scale to zero.** A worker polls for work, so one instance must stay running.
 - **Calling models directly.** Agents run through a command line. A runner that calls a provider's API itself, for Bedrock, Vertex AI and Azure AI Foundry beyond Claude, is not built.
-- **Running an agent somewhere else.** The worker runs the agent beside itself; it cannot yet hand a step to an agent hosted on AgentCore, Fargate or Cloud Run.
+- **Running an agent in the cloud.** An agent can run in a container of its own with Docker. Launchers for Cloud Run, Fargate and AgentCore are not built.
 - **Pipes as packages.** The parts exist (connections, webhooks, tools), and GitHub has all three, but there is no installable package or catalogue.
 - **Parallel steps, fan-out and sub-workflows.** Steps run one at a time.
 - **Tiers and sandbox settings in a definition.** They parse, and publishing says they are not enforced.
@@ -91,6 +91,10 @@ To make one real call through the Claude command line: `WEIR_TEST_CLAUDE=1 go te
 | `WEIR_CLAUDE_MODEL_PREFIX` | Put in front of a model name that begins `claude-`, such as `eu.anthropic.` for Bedrock | none |
 | `WEIR_TYPESAFE_URL`, `WEIR_GEMINI_API_URL` | A different address for Jev or Gemini Decisions, to go through a gateway or proxy | each service's own |
 | `WEIR_BLOB_URL` | Where files are kept: `s3://bucket?region=…`, `gs://bucket`, `azblob://container` or `file:///directory`. See "Where files are kept" below | in Postgres |
+| `WEIR_AGENT_RUNNER` | Where agents run: `inline` (beside the worker) or `docker` (a container each). See "Where agents run" below | `inline` |
+| `WEIR_AGENT_IMAGE` | The image agents run in, for `docker`. Build it from `deploy/agent.Dockerfile` | none |
+| `WEIR_AGENT_URL` | Weir's address as an agent's container reaches it | `http://host.docker.internal` and the API's port |
+| `WEIR_AGENT_DOCKER_ARGS` | Extra arguments for `docker run`: a network, memory and CPU limits | none |
 | `WEIR_AGENT_SHELL` | `on` lets a step give its agent a sandboxed shell. See "A shell for an agent" below | off |
 | `WEIR_SECRETS_DIR` | Directory of secret files for `file:` references, with one directory per workspace | none |
 | `WEIR_SECRET__<WORKSPACE>__<NAME>` | The value of the secret a connection in that workspace names as `env:<NAME>` | none |
@@ -255,6 +259,45 @@ steps:
 - Going over a limit fails the step, and nothing it wrote is kept. The most a definition may ask for is 200 files and 64 MB; a single file is at most 32 MB.
 - What is not built: the Codex adapter cannot write files, and nothing removes old files yet.
 
+### Where agents run
+
+An agent that can do real work should run in a container of its own, with every tool, and with nothing in reach worth stealing. Weir can run agents two ways:
+
+| `WEIR_AGENT_RUNNER` | The agent runs | It can |
+|---|---|---|
+| `inline` (the default) | beside Weir's worker, on the same machine | use only what its step lists, inside a sandbox |
+| `docker` | in a container of its own, one per step | use every tool. The container is the boundary |
+
+```bash
+docker build -f deploy/agent.Dockerfile -t weir-agent .
+export WEIR_AGENT_RUNNER=docker WEIR_AGENT_IMAGE=weir-agent
+export CLAUDE_CODE_OAUTH_TOKEN=…        # from "claude setup-token"; passed to the container
+weir serve
+```
+
+**What the container is given:** Weir's address, the one-time token for its own step, and the credential for the model. Nothing else. It holds no Weir secret, no database address and no third party's credential, so there is nothing for a misled agent to send anywhere.
+
+**What happens:**
+
+1. The worker prepares the agent's directory (a checkout, for example), with whatever credential that takes.
+2. The container fetches its job and that directory from Weir's API, using its token.
+3. The agent works with every tool: a shell, the web, anything in the image.
+4. It sends back its output, what the model call cost, and the files it changed.
+5. Weir checks all of it as it does for any agent: the output against the schema, the changed paths against the step's rules, the limits, and the budget.
+
+- Tools a step lists still go through Weir, which checks and records each call.
+- The token is good for one attempt. Once the step ends it opens nothing.
+- What a container may reach on the network is the platform's to decide: a Docker network here (`WEIR_AGENT_DOCKER_ARGS`), a VPC or a security group in a cloud. A step's `shell.hosts` applies only to an agent run inline.
+- Add the toolchains your code needs to the image; `deploy/agent.Dockerfile` says how.
+
+Know the limits:
+
+- **Not yet run with a real model inside the container.** A real container was started by Weir, fetched its job and directory, ran the Claude command line and reported back, stopping at the model sign-in because the test machine had no token to give it. Everything else in the path is proven; that last step is not.
+- **The cost is the agent's word.** The container reports what the model call cost. Sending model calls through Weir, so that Weir counts them itself and the container holds no model credential, is not built.
+- A directory that packs to more than 30 MB cannot be sent, and neither can a result larger than that.
+- With `docker`, every `ai` step runs in a container. `decide` steps do not: they have no tools.
+- Docker only. Cloud Run, Fargate and AgentCore are not built.
+
 ### An agent that works in a prepared directory
 
 An agent that fixes code has to start inside the code. An `ai` step with `workspace:` names registered code that fills the agent's working directory before it runs. The agent changes the directory in place, and Weir keeps what it added, changed or deleted.
@@ -321,7 +364,7 @@ Weir checks every path a step's agent wrote, changed or deleted, after the agent
 
 ### A shell for an agent
 
-An agent that changes code has to run it. An `ai` step with `shell:` gives its agent a shell, inside a sandbox.
+An agent that changes code has to run it. An `ai` step with `shell:` gives its agent a shell, inside a sandbox. This is for agents run inline, beside the worker. An agent in a container of its own already has a shell and needs none of this.
 
 ```yaml
 - id: fix

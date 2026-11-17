@@ -15,6 +15,7 @@ import (
 	"path"
 	"strconv"
 
+	"github.com/bobbydeveaux/weir/agent"
 	"github.com/bobbydeveaux/weir/engine"
 	"github.com/bobbydeveaux/weir/internal/secrets"
 	"github.com/bobbydeveaux/weir/runner"
@@ -131,6 +132,13 @@ func New(eng *engine.Engine, reg *worker.Registry, opts ...Option) http.Handler 
 	mux.HandleFunc("POST /v1/tasks/{id}/decision", s.decide)
 	mux.HandleFunc("POST /v1/callbacks/{token}", s.callback)
 	mux.HandleFunc("POST /v1/webhooks/{workspace}/{connection}", s.webhook)
+	// An agent in a container of its own: its job, the directory it starts
+	// from, and the one result it sends. The token is its credential.
+	mux.HandleFunc("GET /v1/agent/{token}/job", s.raw(func(r *http.Request) (json.RawMessage, error) {
+		return s.eng.AgentJob(r.Context(), r.PathValue("token"))
+	}))
+	mux.HandleFunc("GET /v1/agent/{token}/workspace", s.agentWorkspace)
+	mux.HandleFunc("POST /v1/agent/{token}/result", s.agentResult)
 	mux.HandleFunc("GET /v1/tools/{token}", s.toolList)
 	mux.HandleFunc("POST /v1/tools/{token}/call", s.toolCall)
 	mux.HandleFunc("GET /v1/workspaces", func(w http.ResponseWriter, r *http.Request) {
@@ -298,7 +306,7 @@ func fail(w http.ResponseWriter, err error) {
 		status = http.StatusForbidden
 	case errors.Is(err, worker.ErrToolFailed):
 		status = http.StatusUnprocessableEntity
-	case errors.Is(err, engine.ErrStaleToken), errors.Is(err, engine.ErrTaskClosed), errors.Is(err, engine.ErrNotBlocked):
+	case errors.Is(err, engine.ErrStaleToken), errors.Is(err, engine.ErrTaskClosed), errors.Is(err, engine.ErrNotBlocked), errors.Is(err, engine.ErrResultSent):
 		status = http.StatusConflict
 	}
 	reply(w, status, map[string]string{"error": err.Error()})
@@ -658,4 +666,33 @@ func (s *server) checkConnection(w http.ResponseWriter, r *http.Request) {
 	}
 	out["checked"], out["ok"], out["github_app"] = true, true, app
 	reply(w, http.StatusOK, out)
+}
+
+// agentWorkspace sends an agent the directory it starts from.
+func (s *server) agentWorkspace(w http.ResponseWriter, r *http.Request) {
+	body, err := s.eng.AgentArchive(r.Context(), r.PathValue("token"))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	defer body.Close()
+	w.Header().Set("Content-Type", "application/gzip")
+	_, _ = io.Copy(w, body)
+}
+
+// agentResult takes the one result an agent sends. What is in it is checked
+// by the worker when it reads it back, exactly as for an agent that ran
+// beside the worker.
+func (s *server) agentResult(w http.ResponseWriter, r *http.Request) {
+	err := s.eng.PutAgentResult(r.Context(), r.PathValue("token"), http.MaxBytesReader(w, r.Body, agent.MaxResult+1024))
+	if err != nil {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			reply(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "the result is too large"})
+			return
+		}
+		fail(w, err)
+		return
+	}
+	reply(w, http.StatusAccepted, map[string]string{"status": "received"})
 }

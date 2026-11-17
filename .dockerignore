@@ -1,0 +1,4 @@
+.git
+console/node_modules
+console/build
+console/.svelte-kit
