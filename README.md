@@ -176,7 +176,7 @@ curl -X POST $WEIR/v1/connections/github/check -H 'X-Weir-Workspace: my-app'
 - Only the GitHub tools can use a connection of this kind. An external step or a plain HTTP tool that names it is refused.
 - The check never fails for a missing key: it says which variable or file to set.
 
-Proven against the real GitHub: Weir signed in as an App, listed where it is installed, and read a private repository with a token minted for that repository alone. Writing with an App's token has been tested against a stand-in only.
+Proven against the real GitHub: Weir signed in as an App, listed where it is installed, read a private repository with a token minted for that repository alone, pushed a branch and opened a pull request.
 
 ### Webhooks from a third party
 
@@ -384,7 +384,7 @@ Proven against the real GitHub: a private repository was cloned as a GitHub App,
 - If the files make no difference, it says so and opens nothing.
 - Its output holds the branch, the commit and the pull request's number and address.
 
-Tested end to end against a repository on disk and a stand-in for GitHub's API: checkout, an agent's changes, a commit, a pushed branch and a pull request. It has not yet pushed to the real GitHub. Whether a file is executable is not carried over.
+Proven against the real GitHub, end to end: a repository was checked out as a GitHub App, a real agent in a container of its own added one file, and this handler pushed a branch and opened a pull request. Whether a file is executable is not carried over.
 
 ### Paths an agent may not change
 

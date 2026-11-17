@@ -136,11 +136,24 @@ func (g *github) do(ctx context.Context, method, path string, body, out any) (in
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if resp.StatusCode >= 300 {
 		var e struct {
-			Message string `json:"message"`
+			Message string            `json:"message"`
+			Errors  []json.RawMessage `json:"errors"`
 		}
 		_ = json.Unmarshal(raw, &e)
 		if e.Message == "" {
 			e.Message = http.StatusText(resp.StatusCode)
+		}
+		// "Validation Failed" says nothing on its own; the reasons are beside it.
+		for _, reason := range e.Errors {
+			var detail struct {
+				Message, Field, Code string
+			}
+			if json.Unmarshal(reason, &detail) != nil || (detail.Message == "" && detail.Field == "") {
+				var text string
+				_ = json.Unmarshal(reason, &text)
+				detail.Message = text
+			}
+			e.Message += "; " + strings.TrimSpace(detail.Field+" "+detail.Code+" "+detail.Message)
 		}
 		return resp.StatusCode, fmt.Errorf("GitHub said %d: %s", resp.StatusCode, e.Message)
 	}
