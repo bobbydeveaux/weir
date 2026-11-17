@@ -385,7 +385,7 @@
 			<section class="panel">
 				<div class="panel-head">
 					<h2>Files</h2>
-					<span class="muted">{files.data.length} written by this run's steps</span>
+					<span class="muted">{files.data.length} written, changed or deleted by this run's steps</span>
 				</div>
 				<div class="panel-body">
 					{#if fileError}<p class="muted" role="alert">{fileError}</p>{/if}
@@ -398,9 +398,11 @@
 								<tr>
 									<td class="mono">{f.step}</td>
 									<td class="mono">{f.path}</td>
-									<td class="muted">{f.content_type.split(';')[0]}</td>
-									<td class="num">{size(f.size)}</td>
-									<td class="num"><button type="button" class="link plain" onclick={() => save(f)}>Download</button></td>
+									<td class="muted">{f.deleted ? '' : f.content_type.split(';')[0]}</td>
+									<td class="num">{f.deleted ? '' : size(f.size)}</td>
+									<td class="num">
+										{#if f.deleted}<span class="muted">Deleted</span>{:else}<button type="button" class="link plain" onclick={() => save(f)}>Download</button>{/if}
+									</td>
 								</tr>
 							{/each}
 						</tbody>

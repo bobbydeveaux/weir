@@ -27,7 +27,7 @@ Then follow [the support inbox example](examples/support-inbox), which classifie
 | Expressions | CEL, for `next` rules, input mappings, triggers and poll conditions |
 | `deterministic` steps | Registered handlers, retries with backoff, an idempotency key per step |
 | `decide` steps | One label from a closed list; an unsure, wrong or failed answer becomes the default. Answered by a small model or a decision model (Jev, Gemini Decisions), chosen per step |
-| `ai` steps | A pinned prompt, a budget, output checked against a JSON Schema, documents the agent may read, files it may write, a sandboxed shell, and tools |
+| `ai` steps | A pinned prompt, a budget, output checked against a JSON Schema, documents the agent may read, files it may write, a prepared working directory, a sandboxed shell, and tools |
 | `human` steps | An inbox, outcomes, timeouts, escalation, values sent with a decision, and a requester who cannot approve their own run |
 | `external` steps | Call a third party, then resume on a callback with a one-time token, or poll until a condition holds |
 | Tools for agents | Every call goes through a proxy that checks it against the step's list and records it. Tools come from the server, from a workspace's MCP servers, and for GitHub |
@@ -229,6 +229,33 @@ steps:
 - A step that is visited again replaces what its earlier visit wrote.
 - Going over a limit fails the step, and nothing it wrote is kept. The most a definition may ask for is 200 files and 64 MB; a single file is at most 32 MB.
 - What is not built: the Codex adapter cannot write files, and nothing removes old files yet.
+
+### An agent that works in a prepared directory
+
+An agent that fixes code has to start inside the code. An `ai` step with `workspace:` names registered code that fills the agent's working directory before it runs. The agent changes the directory in place, and Weir keeps what it added, changed or deleted.
+
+```yaml
+- id: fix
+  kind: ai
+  prompt: fix-dependency@2
+  input: { repo: input.repo, ref: input.ref }
+  workspace:
+    handler: github.checkout        # registered code; given the step's input and "with"
+    with: { connection: github }
+  shell: { hosts: [proxy.golang.org] }
+  writes: { max_files: 50 }         # limits on what may change; the defaults apply if left out
+  output: { schema: { type: object } }
+  budget: { usd: 5 }
+```
+
+- The handler runs on the worker immediately before the agent, outside the agent's sandbox. Register one with `Registry.RegisterWorkspace`. Publishing refuses a name that is not registered.
+- What changed is worked out by Weir: it records the directory before the agent starts and compares afterwards. It does not ask the agent, and it runs no program in the directory once the agent has been in it.
+- The handler can name paths to leave out, in the form a `.gitignore` uses, for installed dependencies and build output. They are fixed before the agent starts.
+- A `.git` directory is never read back, whatever the agent did to it.
+- Changes are kept like any other files a step writes: `steps.fix.files` lists them, with `deleted: true` on a file that was removed, and the API lists and downloads them.
+- The limits are on what changed, not on what the directory holds. Going over fails the step. A new link, or anything else that is not an ordinary file, also fails it.
+- A step with a workspace cannot also list `files:`.
+- Not built: no handler ships with Weir yet (the GitHub checkout is the next item); whether a file is executable is not recorded; the Codex adapter cannot do this.
 
 ### A shell for an agent
 

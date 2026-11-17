@@ -299,6 +299,8 @@ export interface RunFile {
 	size: number;
 	sha256: string;
 	content_type: string;
+	/** The step removed this file from the directory it was given. */
+	deleted?: boolean;
 	created_at: string;
 }
 

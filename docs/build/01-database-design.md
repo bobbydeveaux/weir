@@ -78,7 +78,7 @@ erDiagram
 
 **`blobs`** — files kept by Weir when no bucket is configured: a key, the bytes, their size and digest. With `WEIR_BLOB_URL` set, files go to that bucket (S3, Google Cloud Storage, Azure Blob Storage or a directory) and this table stays empty. Either way the rest of Weir uses one interface and does not know which it is.
 
-**`run_files`** — the files a step produced: the run, the step visit, the path the agent wrote, size, digest, type, and the file's key in the file store. The key is random and holds no part of the path, so nothing an agent writes decides where a file lands. Rows are written in the transaction that completes the step.
+**`run_files`** — the files a step produced: the run, the step visit, the path the agent wrote, size, digest, type, and the file's key in the file store. The key is random and holds no part of the path, so nothing an agent writes decides where a file lands. Rows are written in the transaction that completes the step. A file the step deleted from a prepared directory has a row marked `deleted` and no bytes.
 
 **`schedules`** — when each scheduled trigger of a workflow's live version is next due, with when it last fired and why it could not start a run if it could not. The rows are rewritten each time the workflow is published, and the sweep reads them.
 
