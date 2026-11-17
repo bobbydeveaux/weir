@@ -277,7 +277,7 @@ How work is claimed, held and returned.
 ### 15. Release
 
 - [ ] Every item under "What working means" is ticked (#48)
-- [x] README, with the status stated plainly
+- [x] README, with the status stated plainly (rewritten from this list on 17 November 2026, and it points here for the detail) (#74)
 - [x] Internal documents removed or redacted
 - [ ] Tag `v0.1.0` (#49)
 - [x] Publish the repository, and point the website at it (public since 17 November 2026)

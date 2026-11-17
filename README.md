@@ -24,32 +24,44 @@ Then follow [the support inbox example](examples/support-inbox), which classifie
 | Area | What is built |
 | --- | --- |
 | Definitions | YAML workflows, checked when published; immutable versions; a `live` alias |
-| Expressions | CEL, for `next` rules, input mappings and poll conditions |
+| Expressions | CEL, for `next` rules, input mappings, triggers and poll conditions |
 | `deterministic` steps | Registered handlers, retries with backoff, an idempotency key per step |
-| `decide` steps | One label from a closed list; an unsure, wrong or failed answer becomes the default |
-| `ai` steps | A pinned prompt, output checked against a JSON Schema by the engine, and a budget |
-| `human` steps | An inbox, outcomes, timeouts, escalation, and a requester who cannot approve their own run |
+| `decide` steps | One label from a closed list; an unsure, wrong or failed answer becomes the default. Answered by a small model or a decision model (Jev, Gemini Decisions), chosen per step |
+| `ai` steps | A pinned prompt, a budget, output checked against a JSON Schema, documents the agent may read, and tools |
+| `human` steps | An inbox, outcomes, timeouts, escalation, values sent with a decision, and a requester who cannot approve their own run |
 | `external` steps | Call a third party, then resume on a callback with a one-time token, or poll until a condition holds |
-| Failure | `block`, `cancel` and `continue`; undo handlers run in reverse on `cancel`; a blocked run can be resumed |
+| Tools for agents | Every call goes through a proxy that checks it against the step's list and records it. Tools come from the server, from a workspace's MCP servers, and for GitHub |
+| Connections | A named address per workspace, HTTP or MCP, with a credential named by reference and never stored |
+| Events in | An application reports what happened, or a third party posts a signed webhook; triggers start the workflows that want it |
+| Events out | Hooks to an application, signed if asked, retried until delivered; and live streams of a run's events |
+| Failure | `block`, `cancel` and `continue`; undo handlers run in reverse; a blocked run can be resumed or cancelled |
 | Tokens | One per attempt, stored hashed. A late, repeated or made-up completion changes nothing |
 | Crashes | A worker that disappears loses its lease, and the step is run again |
-| Audit | An append-only event log per run, and a record of every model call with its template, tokens and cost |
-| Runners | `cli` runs steps through the Claude command line; `fake` returns scripted answers for tests |
-| Interfaces | An HTTP API and the `weir` command line |
+| Audit | An append-only event log per run, and a record of every model call (prompt, reply, tokens, cost) and every tool call |
+| Tenancy and access | Workspaces that cannot see each other; API keys with roles, each bound to one workspace |
+| Models | Claude and Codex through their command lines; Claude on Bedrock, Vertex AI or through a gateway by settings |
+| Interfaces | An HTTP API, the `weir` command line, and a web console in `console/` |
 
 The database enforces the rules that matter: published versions and events cannot be changed or deleted, and a step can have only one live attempt.
 
+A real application runs on it: [how it is wired](docs/build/04-agent-demo-on-weir.md).
+
 ## What is not built yet
 
-- **Tools for agents.** An `ai` step can reason and return structured output, but cannot read or change anything. The tool proxy is next.
-- **Triggers, hooks, tiers and sandbox settings.** A definition may contain them, and publishing says they are not enforced.
-- **Sign-in for people.** API keys exist (see Access), but a person has no sign-in of their own: the console takes a pasted key, and an approver's identity is whatever a trusted application says it is.
-- **Roles.** A human step records the role it is for, but does not yet check that the person deciding holds it. Only "not the requester" and a named user are enforced.
-- **Transcripts.** Model calls are recorded with their cost and usage, but the full transcript is not stored yet.
-- **Other providers.** Codex and Gemini adapters, and the `api` runner.
+The full list, with an issue for each item, is [docs/build/02-epics.md](docs/build/02-epics.md). The larger gaps:
+
+- **Sign-in for people.** There are API keys (see Access), but a person has no sign-in of their own: the console takes a pasted key, and an approver's identity is whatever a trusted application says it is.
+- **Roles on approvals.** A human step records the role it is for, but does not yet check that the person deciding holds it. Only "not the requester" and a named user are enforced.
+- **Scale to zero.** A worker polls for work, so one instance must stay running.
+- **Calling models directly.** Agents run through a command line. A runner that calls a provider's API itself, for Bedrock, Vertex AI and Azure AI Foundry beyond Claude, is not built.
+- **Running an agent somewhere else.** The worker runs the agent beside itself; it cannot yet hand a step to an agent hosted on AgentCore, Fargate or Cloud Run.
+- **Pipes as packages.** The parts exist (connections, webhooks, tools), and GitHub has all three, but there is no installable package or catalogue.
 - **Parallel steps, fan-out and sub-workflows.** Steps run one at a time.
-- **Scale to zero.** Workers poll. The wake-up path is not built.
-- **CI has not run.** The workflow is written, but the repository is not on GitHub yet.
+- **Schedules.** A workflow starts on an event or a call, not yet on a timer.
+- **Tiers and sandbox settings in a definition.** They parse, and publishing says they are not enforced.
+- **A tagged release.** There is no version yet, and the contract will change before `v0.1.0`.
+
+Some of what is built has not met the real service it is for: the write tools for GitHub, the decision models, and Bedrock, Vertex AI and gateways have been tested against stand-ins or not run at all. The to-do list says which, item by item.
 
 ## Develop
 
