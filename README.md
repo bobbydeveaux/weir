@@ -101,7 +101,7 @@ curl $WEIR/v1/runs -H "Authorization: Bearer weir_3f9c…"
 - A key acts as itself: its name is the actor on everything it does. A key made with `--act-as` may name the person it is acting for in `X-Weir-Actor`, which is for an application with its own sign-in.
 - Callbacks and an agent's tool calls carry a one-time token for a single attempt and need no key.
 
-Not yet: sign-in for people, and signed hooks.
+Not yet: sign-in for people.
 
 ### Credentials for connections
 
