@@ -257,6 +257,26 @@ An agent that fixes code has to start inside the code. An `ai` step with `worksp
 - A step with a workspace cannot also list `files:`.
 - Not built: no handler ships with Weir yet (the GitHub checkout is the next item); whether a file is executable is not recorded; the Codex adapter cannot do this.
 
+### Paths an agent may not change
+
+Weir checks every path a step's agent wrote, changed or deleted, after the agent has exited. One change that is not allowed fails the step, and nothing it changed is kept.
+
+```yaml
+- id: cover                       # may write tests and nothing else
+  kind: ai
+  prompt: add-tests@4
+  workspace: { handler: github.checkout }
+  writes:
+    only: ["*_test.go", "testdata/"]
+    never: ["billing/"]
+```
+
+- `only` lists the only paths that may change. `never` lists paths that may not. Both use the form a `.gitignore` uses, so `*_test.go` matches at any depth and `billing/` means everything under it.
+- Some paths are protected whatever a step says, because changing them changes what runs later: `.git/`, `.github/workflows/`, `.claude/`, `CLAUDE.md` and `AGENTS.md`. A step that really must change them sets `writes: { protected: false }`.
+- Protected wins over `never`, which wins over `only`.
+- The agent is told the rules, as a courtesy. The check does not depend on it having listened.
+- The rules apply to files written under `writes:` as well as changes to a prepared directory.
+
 ### A shell for an agent
 
 An agent that changes code has to run it. An `ai` step with `shell:` gives its agent a shell, inside a sandbox.
