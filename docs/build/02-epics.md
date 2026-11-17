@@ -14,7 +14,7 @@ A real workflow has run end to end from the command line with the Claude command
 | --- | --- | --- |
 | 0 Foundations | Done |  |
 | 1 Contract | Mostly done | A JSON Schema for definitions; type-checking expressions; the event and error catalogues |
-| 2 Storage | Done | The blob store |
+| 2 Storage | Done | |
 | 3 Definitions | Mostly done | Alias history; `weir versions` and `weir alias` |
 | 4 Run engine | Done | Undoing completed steps on cancel |
 | 5 Workers and tokens | Mostly done | Waking a worker on a Postgres notification (streams already use them; workers still poll) |
@@ -130,7 +130,7 @@ The schema in [the database design](01-database-design.md).
 - [x] Migrations for every table in the first version
 - [x] Triggers for immutable versions and the append-only event log
 - [x] A store package with one function per transition, each a single transaction
-- [ ] A blob store interface with a Postgres implementation (#4)
+- [x] A file store behind one interface: Postgres by default, or a bucket named by `WEIR_BLOB_URL` (S3, Google Cloud Storage, Azure Blob Storage or a directory), with credentials from the platform's own identity. The same tests pass for Postgres, a directory, and S3 against an S3-compatible server; Google Cloud Storage and Azure have not been run. Nothing uses it yet (#4)
 - [x] Tests that run against a real Postgres, not a fake
 
 ### 3. Definitions, versions and aliases
@@ -228,6 +228,7 @@ How work is claimed, held and returned.
 - [ ] The full transcript stored against the attempt (the prompt as sent and the final reply are stored, with every tool call; the model's turns in between are not) (#31)
 - [x] The tool proxy, exposed to the command line as its only MCP server: an allow-list per step, with read and write classes (the `approve` class is the next item)
 - [x] Tools from the server's registry and from a workspace's MCP connections exposed to agents
+- [ ] An `ai` step can produce files, kept in the file store, for a later step or the application to fetch (#77)
 - [ ] A write under `approve` parks until a person approves that exact call (#32)
 - [ ] Tool output marked as data, and a tainted run blocked from writing to a different third party (#33)
 - [x] Documents for agents (`files` on an `ai` step), MCP servers as a source of tools, data on a decision, prompt and reply kept per model call

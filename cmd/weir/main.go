@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/bobbydeveaux/weir/api"
+	"github.com/bobbydeveaux/weir/blob"
 	"github.com/bobbydeveaux/weir/engine"
 	"github.com/bobbydeveaux/weir/engine/store"
 	"github.com/bobbydeveaux/weir/internal/config"
@@ -71,6 +72,8 @@ Environment:
   WEIR_PUBLIC_URL    Address third parties use to reach the API (default http://localhost:8080)
   WEIR_RUNNER        How ai and decide steps run: cli, api or fake (default cli)
   WEIR_ADMIN_KEY     Turns authentication on, and is the key that may do anything
+  WEIR_BLOB_URL      Where files are kept: s3://bucket, gs://bucket, azblob://container or
+                     file:///directory (default: in Postgres)
   WEIR_SECRETS_DIR   Directory of secret files, one directory per workspace, for file: references
   WEIR_SECRET__<WORKSPACE>__<NAME>
                      The value of a connection's secret named env:<NAME> in that workspace
@@ -81,6 +84,10 @@ func main() {
 	defer stop()
 	os.Exit(run(ctx, os.Args[1:], os.Getenv, os.Stdout, os.Stderr))
 }
+
+// openBucket opens the bucket files are kept in. It is nil in a build made
+// without the cloud storage libraries.
+var openBucket func(ctx context.Context, address string) (blob.Store, error)
 
 // app is one invocation of the command line.
 type app struct {
@@ -250,6 +257,21 @@ func (a *app) serve([]string) error {
 	w := &worker.Worker{Engine: eng, Runner: r, Handlers: a.reg, ID: "weir-serve", CallbackURL: public,
 		ToolURL: "http://localhost" + cfg.HTTPAddr}
 
+	// Files are kept in Postgres unless a bucket is named.
+	if address := a.getenv("WEIR_BLOB_URL"); address != "" {
+		if openBucket == nil {
+			return errors.New("WEIR_BLOB_URL is set, but this build of weir was made without bucket support (the nobuckets tag)")
+		}
+		files, err := openBucket(a.ctx, address)
+		if err != nil {
+			return fmt.Errorf("WEIR_BLOB_URL: %w", err)
+		}
+		defer files.Close()
+		eng.Files = files
+	} else {
+		eng.Files = blob.NewPostgres(eng.Pool())
+	}
+
 	// With an admin key set, every request must carry a key. Without one the
 	// API trusts whoever calls it, which is only safe on a trusted network.
 	adminKey := a.getenv("WEIR_ADMIN_KEY")
@@ -269,6 +291,7 @@ func (a *app) serve([]string) error {
 	}()
 	fmt.Fprintf(a.out, "weir is listening on %s with the %s runner; decisions use %s unless a step names a provider\n", cfg.HTTPAddr, cfg.Runner, decideWith)
 	fmt.Fprintln(a.out, access)
+	fmt.Fprintf(a.out, "files are kept in %s\n", eng.Files.Describe())
 
 	select {
 	case <-a.ctx.Done():

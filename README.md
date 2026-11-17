@@ -90,6 +90,7 @@ To make one real call through the Claude command line: `WEIR_TEST_CLAUDE=1 go te
 | `WEIR_CLAUDE_MODELS` | The model for each tier, as `small=…,large=…` | `small=haiku,large=opus` |
 | `WEIR_CLAUDE_MODEL_PREFIX` | Put in front of a model name that begins `claude-`, such as `eu.anthropic.` for Bedrock | none |
 | `WEIR_TYPESAFE_URL`, `WEIR_GEMINI_API_URL` | A different address for Jev or Gemini Decisions, to go through a gateway or proxy | each service's own |
+| `WEIR_BLOB_URL` | Where files are kept: `s3://bucket?region=…`, `gs://bucket`, `azblob://container` or `file:///directory`. See "Where files are kept" below | in Postgres |
 | `WEIR_SECRETS_DIR` | Directory of secret files for `file:` references, with one directory per workspace | none |
 | `WEIR_SECRET__<WORKSPACE>__<NAME>` | The value of the secret a connection in that workspace names as `env:<NAME>` | none |
 | `WEIR_CODEX_MODEL` | Model for steps with `tier: codex`, which run through the Codex command line | Codex's default |
@@ -172,6 +173,28 @@ triggers:
 - The shared secret is named by reference and never stored, like a connection's credential. One workspace's secret does not verify another's webhooks.
 
 Not yet: Slack's signature scheme, and refusing an old request that is replayed without a delivery id.
+
+### Where files are kept
+
+Weir has one place to keep files, for anything too large or too binary to sit in a step's output. The storage behind it is a setting.
+
+| `WEIR_BLOB_URL` | Files go to |
+|---|---|
+| not set | The Postgres database Weir already uses. Right for a small install and modest files |
+| `s3://my-bucket?region=eu-west-1` | Amazon S3 |
+| `gs://my-bucket` | Google Cloud Storage |
+| `azblob://my-container` | Azure Blob Storage |
+| `file:///var/lib/weir/files` | A directory on disk |
+
+Weir holds no key for a bucket. Each cloud's own library finds the credentials the platform provides: an IAM role on AWS, Workload Identity on Google Cloud, a managed identity on Azure. The server says which storage it is using when it starts.
+
+A file is at most 32 MB. One that is larger is refused and nothing of it is kept.
+
+The cloud storage libraries are most of the size of the `weir` program: about 88 MB with them, about 27 MB without. If you will only ever keep files in Postgres, build with `go build -tags nobuckets ./cmd/weir`.
+
+Nothing uses the store yet. An agent producing files into it is the next item.
+
+The same tests run against every kind of storage. They pass for Postgres, for a directory, and for S3 through the AWS library against an S3-compatible server. Google Cloud Storage and Azure have not been run.
 
 ### Schedules
 

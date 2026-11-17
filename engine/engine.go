@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
+	"github.com/bobbydeveaux/weir/blob"
 	"github.com/bobbydeveaux/weir/internal/secrets"
 	"github.com/bobbydeveaux/weir/spec"
 )
@@ -50,6 +51,9 @@ type Engine struct {
 	// tasks) is looked up inside it. Work in progress is the exception: a
 	// worker claims steps from every workspace, and each step carries its own.
 	workspace string
+
+	// Files is where files are kept. Nil means there is nowhere to keep them.
+	Files blob.Store
 
 	// HandlerExists, when set, lets Publish refuse a definition that names an
 	// unregistered deterministic handler.
@@ -209,6 +213,10 @@ type Endpoint struct {
 	Workspace string
 	Auth      Auth
 }
+
+// Pool returns the database the engine uses, for a part of the program that
+// keeps its own tables there.
+func (e *Engine) Pool() *pgxpool.Pool { return e.pool }
 
 // Workspace returns the name of the workspace this engine reads and writes.
 func (e *Engine) Workspace() string { return e.slug }
