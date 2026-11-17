@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/bobbydeveaux/weir/internal/secrets"
 )
 
 // ContractVersion is the only value of the top-level `weir:` key this engine accepts.
@@ -215,6 +217,11 @@ func (d *Definition) Validate(opts ValidateOptions) error {
 		}
 		if len(h.On) == 0 {
 			add("hooks[%d]: on must list at least one thing to report, such as run.succeeded", i)
+		}
+		if h.Secret != "" {
+			if err := secrets.CheckRef(h.Secret); err != nil {
+				add("hooks[%d]: secret: %v", i, err)
+			}
 		}
 		for _, on := range h.On {
 			if !hookPattern.MatchString(on) {
@@ -439,6 +446,10 @@ type Hook struct {
 	Connection string `yaml:"connection" json:"connection"`
 	// Path is the path on that connection, starting with a slash.
 	Path string `yaml:"path" json:"path"`
+	// Secret, when set, is a reference to a shared secret (env:NAME or
+	// file:name). Weir signs each hook with it, so that the receiver can
+	// check the hook came from Weir.
+	Secret string `yaml:"secret,omitempty" json:"secret,omitempty"`
 }
 
 var hookPattern = regexp.MustCompile(`^(\*|[a-z]+\.(\*|[a-z_]+))$`)

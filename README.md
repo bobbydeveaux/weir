@@ -162,6 +162,29 @@ triggers:
 
 Not yet: Slack's signature scheme, and refusing an old request that is replayed without a delivery id.
 
+### Hooks, and checking they came from Weir
+
+A workflow can tell an application when a run moves. Give the hook a shared secret and Weir signs it, so the receiver can check it came from Weir and is not an old one being replayed.
+
+```yaml
+hooks:
+  - on: [run.*, step.waiting]
+    connection: my-app
+    path: /weir/hooks
+    secret: env:HOOK_SECRET       # read from WEIR_SECRET__<WORKSPACE>__HOOK_SECRET
+```
+
+Each signed hook carries two more headers:
+
+| Header | Value |
+|---|---|
+| `Weir-Timestamp` | When it was sent, in seconds since 1970 |
+| `Weir-Signature` | `sha256=` and the HMAC-SHA256, as hex, of `<timestamp>.<body>` under the shared secret |
+
+To check one: work out the same HMAC over the timestamp, a full stop and the exact bytes of the body; compare it with the header in constant time; and refuse the hook if the timestamp is more than a few minutes old. `Weir-Hook-Id` is the same on every attempt at one hook, so a receiver that has seen it can ignore a repeat.
+
+If the secret is not set on the server, the hook is not sent unsigned. It waits and is tried again, like any failed delivery, and the run's record says which variable to set.
+
 ### GitHub tools
 
 An agent can read a repository and propose a change to it. The tools go through a connection, so Weir adds the token, checks each call against the step's list, and records it. The agent never sees the token.

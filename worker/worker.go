@@ -5,6 +5,7 @@ package worker
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -15,6 +16,7 @@ import (
 	"os"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -249,6 +251,16 @@ func (w *Worker) DeliverHooks(ctx context.Context) (int, error) {
 		if err := w.Handlers.sign(req, d.To); err != nil {
 			return err // not sent; tried again later, once the secret is there
 		}
+		if d.Secret != "" {
+			// Never sent unsigned when a signature was asked for.
+			secret, err := w.Handlers.ResolveSecret(d.To.Workspace, d.Secret)
+			if err != nil {
+				return fmt.Errorf("the hook could not be signed: %w", err)
+			}
+			at := strconv.FormatInt(time.Now().Unix(), 10)
+			req.Header.Set("Weir-Timestamp", at)
+			req.Header.Set("Weir-Signature", "sha256="+SignHook(secret, at, d.Body))
+		}
 		resp, err := w.HTTP.Do(req)
 		if err != nil {
 			return err
@@ -259,6 +271,17 @@ func (w *Worker) DeliverHooks(ctx context.Context) (int, error) {
 		}
 		return nil
 	})
+}
+
+// SignHook returns the signature Weir puts on a hook: the HMAC-SHA256, as
+// hex, of the timestamp, a full stop, and the body, under the shared secret.
+// The timestamp is signed with the body so that a receiver can refuse a hook
+// that is old, and nobody can change the time without the secret.
+func SignHook(secret, timestamp string, body []byte) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(timestamp + "."))
+	mac.Write(body)
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 // RunOnce claims one step and runs it. It reports whether there was a step to run.
