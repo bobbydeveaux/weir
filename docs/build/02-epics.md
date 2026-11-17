@@ -28,7 +28,7 @@ A real workflow has run end to end from the command line with the Claude command
 | 13 API and command line | Mostly done | Sign-in for people (the console takes a key today); a published API description; logs and metrics; the newer endpoints on the command line |
 | 14 Examples and conformance | Started | Two more examples; tests for all three; the conformance suite. A real application (agent-demo) runs on Weir, which the plan did not ask for |
 | 15 Release | Started | The repository is public. No tagged version yet |
-| 16 Pipes | Not started | Credentials on connections are in, so this is unblocked |
+| 16 Pipes | Started | Signed webhooks come in as events. Left: the package format, the GitHub and Slack Pipes' tools, and connecting from the console |
 | 17 Running in the cloud | Not started | Weir does not idle at zero yet |
 | 18 Learning and authoring | Not started |  |
 
@@ -287,7 +287,8 @@ How work is claimed, held and returned.
 A Pipe is one package per third party: its connection, the events it sends in, the calls that can be made out, and the tools it gives agents. Most of the parts exist separately; this epic packages them.
 
 - [ ] The package format for a Pipe, and installing one into a workspace (#50)
-- [ ] Inbound webhooks from a third party, with the sender's signature checked, turned into events (#51)
+- [x] Inbound webhooks from a third party, with the sender's signature checked, turned into events: `POST /v1/webhooks/{workspace}/{connection}`, GitHub's scheme and a general HMAC-SHA256 one, with the delivery id kept so that a repeat starts nothing. Tested with requests signed in the tests; not yet received from GitHub itself (#51)
+- [ ] Refuse a webhook that is replayed long after it was sent: a signed timestamp where the sender provides one, and a limit on how old a delivery may be (#70)
 - [ ] The GitHub Pipe: webhooks in, and tools to read a repository, open a branch, commit and open a pull request (#52)
 - [ ] The Slack Pipe: messages in, and a tool to post (#53)
 - [ ] Connecting a Pipe from the console by signing in to the third party (#54)

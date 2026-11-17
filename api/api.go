@@ -122,6 +122,7 @@ func New(eng *engine.Engine, reg *worker.Registry, opts ...Option) http.Handler 
 	mux.HandleFunc("GET /v1/tasks", s.tasks)
 	mux.HandleFunc("POST /v1/tasks/{id}/decision", s.decide)
 	mux.HandleFunc("POST /v1/callbacks/{token}", s.callback)
+	mux.HandleFunc("POST /v1/webhooks/{workspace}/{connection}", s.webhook)
 	mux.HandleFunc("GET /v1/tools/{token}", s.toolList)
 	mux.HandleFunc("POST /v1/tools/{token}/call", s.toolCall)
 	mux.HandleFunc("GET /v1/workspaces", func(w http.ResponseWriter, r *http.Request) {
@@ -378,6 +379,9 @@ func (s *server) connection(w http.ResponseWriter, r *http.Request) {
 		// Auth says how Weir signs in: a kind, and a reference to a secret.
 		// The secret itself is never sent here and never stored.
 		Auth engine.Auth `json:"auth"`
+		// Webhook says how the third party signs what it sends to Weir. Left
+		// out, whatever was set before is kept.
+		Webhook *engine.Webhook `json:"webhook"`
 	}
 	if !decode(w, r, &in) {
 		return
@@ -407,7 +411,11 @@ func (s *server) connection(w http.ResponseWriter, r *http.Request) {
 		for i, t := range tools {
 			names[i] = r.PathValue("name") + "." + t.Name
 		}
-		reply(w, http.StatusOK, map[string]any{"name": r.PathValue("name"), "kind": "mcp", "tools": names})
+		out := map[string]any{"name": r.PathValue("name"), "kind": "mcp", "tools": names}
+		if !s.receives(w, r, in.Webhook, out) {
+			return
+		}
+		reply(w, http.StatusOK, out)
 		return
 	}
 	if in.Kind != "" && in.Kind != "http" {
@@ -423,6 +431,9 @@ func (s *server) connection(w http.ResponseWriter, r *http.Request) {
 		// Say whether the secret is there yet, and where it is read from, so
 		// that whoever runs the server knows what to set. Never the value.
 		out["secret_found"], out["secret_read_from"] = s.reg.SecretStatus(s.in(r).Workspace(), in.Auth.Secret)
+	}
+	if !s.receives(w, r, in.Webhook, out) {
+		return
 	}
 	reply(w, http.StatusOK, out)
 }
@@ -565,4 +576,27 @@ func (s *server) toolCall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reply(w, http.StatusOK, map[string]any{"result": out})
+}
+
+// receives stores how a connection's webhooks are signed, when the request
+// says, and adds to out the address to give the third party. It returns false
+// after replying with an error.
+func (s *server) receives(w http.ResponseWriter, r *http.Request, hook *engine.Webhook, out map[string]any) bool {
+	if hook == nil {
+		return true
+	}
+	eng, name := s.in(r), r.PathValue("name")
+	if err := eng.SetWebhook(r.Context(), name, *hook); err != nil {
+		fail(w, err)
+		return false
+	}
+	if hook.Kind == engine.WebhookNone {
+		return true
+	}
+	found, readFrom := s.reg.SecretStatus(eng.Workspace(), hook.Secret)
+	out["webhook"] = map[string]any{
+		"path": "/v1/webhooks/" + eng.Workspace() + "/" + name, "kind": hook.Kind,
+		"secret_found": found, "secret_read_from": readFrom,
+	}
+	return true
 }

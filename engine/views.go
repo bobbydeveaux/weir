@@ -164,7 +164,7 @@ func (e *Engine) Connections(ctx context.Context) (json.RawMessage, error) {
 	return e.list(ctx, `
 		SELECT name, kind, base_url, read_only, tools, synced_at, secret_ref IS NOT NULL AS has_secret, created_at,
 			jsonb_strip_nulls(jsonb_build_object('kind', auth_kind, 'secret', secret_ref, 'header', auth_header,
-				'username', auth_username)) AS auth
+				'username', auth_username)) AS auth, webhook
 		FROM connections WHERE workspace_id = $1::uuid ORDER BY name`, e.workspace)
 }
 

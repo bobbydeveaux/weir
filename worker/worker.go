@@ -71,6 +71,17 @@ func (r *Registry) SecretStatus(workspace, ref string) (found bool, readFrom str
 	return err == nil, readFrom
 }
 
+// ResolveSecret returns the value of a workspace's secret, for checking the
+// signature on something a third party sent. The value must not be stored,
+// logged or returned to a caller.
+func (r *Registry) ResolveSecret(workspace, ref string) (string, error) {
+	resolver := r.Secrets
+	if resolver == nil {
+		resolver = secrets.FromEnv(nil)
+	}
+	return resolver.Resolve(workspace, ref)
+}
+
 // sign adds a connection's credential to a request. If the secret cannot be
 // found it returns an error, and the request must not be sent.
 func (r *Registry) sign(req *http.Request, to engine.Endpoint) error {
