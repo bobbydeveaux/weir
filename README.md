@@ -292,7 +292,7 @@ weir serve
 
 Know the limits:
 
-- **Not yet run with a real model inside the container.** A real container was started by Weir, fetched its job and directory, ran the Claude command line and reported back, stopping at the model sign-in because the test machine had no token to give it. Everything else in the path is proven; that last step is not.
+- **Proven on a Mac with Docker Desktop.** Weir started a real container, and a real agent inside it edited a file, deleted one with the shell and wrote a third. It ran as the container's own user and saw none of Weir's variables. Docker on a Linux host has not been run.
 - **The cost is the agent's word.** The container reports what the model call cost. Sending model calls through Weir, so that Weir counts them itself and the container holds no model credential, is not built.
 - A directory that packs to more than 30 MB cannot be sent, and neither can a result larger than that.
 - With `docker`, every `ai` step runs in a container. `decide` steps do not: they have no tools.
