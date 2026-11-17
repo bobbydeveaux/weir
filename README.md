@@ -280,7 +280,24 @@ An agent that fixes code has to start inside the code. An `ai` step with `worksp
 - Changes are kept like any other files a step writes: `steps.fix.files` lists them, with `deleted: true` on a file that was removed, and the API lists and downloads them.
 - The limits are on what changed, not on what the directory holds. Going over fails the step. A new link, or anything else that is not an ordinary file, also fails it.
 - A step with a workspace cannot also list `files:`.
-- Not built: no handler ships with Weir yet (the GitHub checkout is the next item); whether a file is executable is not recorded; the Codex adapter cannot do this.
+- Not built: whether a file is executable is not recorded; the Codex adapter cannot do this.
+
+One handler ships with Weir, `github.checkout`. It clones one repository into the agent's directory.
+
+| Read from | Name | Meaning |
+|---|---|---|
+| the step's input | `repo` | The repository, as `owner/name`. Not needed if the connection is for one repository |
+| the step's input | `ref` | A branch or tag. The default branch if left out |
+| `with` | `connection` | The connection to use. `github` if left out |
+| `with` | `depth` | How much history to fetch. 1 if left out |
+
+- It asks for a read-only token for that one repository, from a GitHub App connection or a bearer token.
+- The token is given to git for the one command, through its environment. It is not in the remote's address, the repository's configuration or a process listing, so an agent with a shell cannot find it afterwards.
+- Git runs with no configuration but Weir's own, hooks off, and no submodules.
+- Every `.gitignore` in the repository, at any depth, decides what is left out of the agent's changes.
+- The worker needs `git` installed.
+
+Proven against the real GitHub: a private repository was cloned as a GitHub App, and the token was nowhere in the directory. The handler's reading of a step's input and settings is not yet covered by a test.
 
 ### Paths an agent may not change
 
