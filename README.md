@@ -133,6 +133,7 @@ weir connection github https://api.github.com --workspace my-app --auth bearer -
 | `bearer` | `Authorization: Bearer <secret>` |
 | `header` | `<header>: <secret>`, with `--header X-Api-Key` |
 | `basic` | `Authorization: Basic …`, with `--username` |
+| `github-app` | Nothing. The secret is a GitHub App's private key, which signs requests for short-lived tokens. See "Signing in as a GitHub App" |
 
 A secret is named in one of two ways, and a workspace can name only its own:
 
@@ -148,6 +149,30 @@ A secret is named in one of two ways, and a workspace can name only its own:
 - A redirect to a different host is not followed, so a third party cannot send the credential somewhere else.
 
 Not yet: signing in with the machine's own cloud identity, with no secret at all, and limiting which addresses a connection may point at.
+
+### Signing in as a GitHub App
+
+A GitHub App is the right credential for a server. Installing it on an organisation is the organisation saying what Weir may do, and its tokens last an hour.
+
+```bash
+# The App's private key, given to the Weir server by the platform. Weir never stores it.
+mkdir -p $WEIR_SECRETS_DIR/my-app && cp fixer.private-key.pem $WEIR_SECRETS_DIR/my-app/github-app-key
+
+# The connection names the App and the key.
+weir connection github https://api.github.com --workspace my-app \
+  --auth github-app --app Iv23liExampleClientId --secret file:github-app-key
+
+# Ask Weir whether it can sign in. It answers with the App's name and where it is installed.
+curl -X POST $WEIR/v1/connections/github/check -H 'X-Weir-Workspace: my-app'
+```
+
+- `--app` is the App's client id or App id, from its settings page on GitHub.
+- For each call, Weir asks GitHub for a token for **one repository** with the **least permission the call needs**: reading a file asks for read, opening a pull request asks for write on pull requests and nothing else.
+- A token is held in memory for ten minutes and never written anywhere. An agent never sees one.
+- Only the GitHub tools can use a connection of this kind. An external step or a plain HTTP tool that names it is refused.
+- The check never fails for a missing key: it says which variable or file to set.
+
+Proven against the real GitHub: Weir signed in as an App, listed where it is installed, and read a private repository with a token minted for that repository alone. Writing with an App's token has been tested against a stand-in only.
 
 ### Webhooks from a third party
 

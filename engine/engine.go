@@ -235,23 +235,30 @@ func (e *Engine) PutConnection(ctx context.Context, name, baseURL string, auth A
 		kind = secrets.None
 	}
 	_, err := e.pool.Exec(ctx, `
-		INSERT INTO connections (workspace_id, name, base_url, auth_kind, secret_ref, auth_header, auth_username)
-		VALUES ($1::uuid, $2, $3, $4, NULLIF($5, ''), NULLIF($6, ''), NULLIF($7, ''))
+		INSERT INTO connections (workspace_id, name, base_url, auth_kind, secret_ref, auth_header, auth_username, auth_app)
+		VALUES ($1::uuid, $2, $3, $4, NULLIF($5, ''), NULLIF($6, ''), NULLIF($7, ''), NULLIF($8, ''))
 		ON CONFLICT (workspace_id, name) DO UPDATE
 		SET base_url = EXCLUDED.base_url, kind = 'http', tools = '[]'::jsonb, auth_kind = EXCLUDED.auth_kind,
-			secret_ref = EXCLUDED.secret_ref, auth_header = EXCLUDED.auth_header, auth_username = EXCLUDED.auth_username`,
-		e.workspace, name, baseURL, kind, auth.Secret, auth.Header, auth.Username)
+			secret_ref = EXCLUDED.secret_ref, auth_header = EXCLUDED.auth_header, auth_username = EXCLUDED.auth_username,
+			auth_app = EXCLUDED.auth_app`,
+		e.workspace, name, baseURL, kind, auth.Secret, auth.Header, auth.Username, auth.App)
 	return err
+}
+
+// Connection finds a connection in this engine's workspace: where it is, and
+// how Weir signs in to it.
+func (e *Engine) Connection(ctx context.Context, name string) (Endpoint, error) {
+	return e.endpoint(ctx, e.pool, e.workspace, name)
 }
 
 // endpoint finds a connection in a workspace, by the workspace's id.
 func (e *Engine) endpoint(ctx context.Context, q querier, workspace, name string) (Endpoint, error) {
 	ep := Endpoint{Connection: name}
 	err := q.QueryRow(ctx, `
-		SELECT c.base_url, w.slug, c.auth_kind, COALESCE(c.secret_ref, ''), COALESCE(c.auth_header, ''), COALESCE(c.auth_username, '')
+		SELECT c.base_url, w.slug, c.auth_kind, COALESCE(c.secret_ref, ''), COALESCE(c.auth_header, ''), COALESCE(c.auth_username, ''), COALESCE(c.auth_app, '')
 		FROM connections c JOIN workspaces w ON w.id = c.workspace_id
 		WHERE c.workspace_id = $1::uuid AND c.name = $2`, workspace, name).
-		Scan(&ep.URL, &ep.Workspace, &ep.Auth.Kind, &ep.Auth.Secret, &ep.Auth.Header, &ep.Auth.Username)
+		Scan(&ep.URL, &ep.Workspace, &ep.Auth.Kind, &ep.Auth.Secret, &ep.Auth.Header, &ep.Auth.Username, &ep.Auth.App)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ep, fmt.Errorf("connection %q: %w", name, ErrNotFound)
 	}

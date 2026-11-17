@@ -29,6 +29,10 @@ const (
 	Bearer = "bearer" // Authorization: Bearer <secret>
 	Header = "header" // <header>: <secret>
 	Basic  = "basic"  // Authorization: Basic base64(<username>:<secret>)
+	// GitHubApp signs in as a GitHub App. The secret is the App's private
+	// key, and is never sent anywhere: it signs a request for a short-lived
+	// token for one repository. Only the GitHub tools can use it.
+	GitHubApp = "github-app"
 )
 
 // Auth says how to sign in to a connection. It holds a reference to the
@@ -42,11 +46,14 @@ type Auth struct {
 	Header string `json:"header,omitempty"`
 	// Username is the user name, for kind basic.
 	Username string `json:"username,omitempty"`
+	// App is the GitHub App's client id or App id, for kind github-app.
+	App string `json:"app,omitempty"`
 }
 
 var (
 	envName    = regexp.MustCompile(`^[A-Z][A-Z0-9]*(_[A-Z0-9]+)*$`)
 	fileName   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+	appName    = regexp.MustCompile(`^[A-Za-z0-9]{1,64}$`)
 	headerName = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9-]*$`)
 )
 
@@ -54,8 +61,8 @@ var (
 func (a Auth) Check() error {
 	switch a.Kind {
 	case "", None:
-		if a.Secret != "" || a.Header != "" || a.Username != "" {
-			return errors.New("auth has a secret, a header or a user name but no kind: set kind to bearer, header or basic")
+		if a.Secret != "" || a.Header != "" || a.Username != "" || a.App != "" {
+			return errors.New("auth has a secret, a header, a user name or an app but no kind: set kind to bearer, header, basic or github-app")
 		}
 		return nil
 	case Bearer:
@@ -72,8 +79,12 @@ func (a Auth) Check() error {
 		if a.Username == "" || strings.Contains(a.Username, ":") {
 			return errors.New("auth of kind basic needs a user name, with no colon in it")
 		}
+	case GitHubApp:
+		if !appName.MatchString(a.App) {
+			return errors.New("auth of kind github-app needs app: the App's client id or App id, from its settings page on GitHub")
+		}
 	default:
-		return fmt.Errorf("auth kind %q is not one of none, bearer, header, basic", a.Kind)
+		return fmt.Errorf("auth kind %q is not one of none, bearer, header, basic, github-app", a.Kind)
 	}
 	return CheckRef(a.Secret)
 }
@@ -172,6 +183,10 @@ func (r *Resolver) Apply(req *http.Request, workspace string, a Auth) error {
 	}
 	if err := a.Check(); err != nil {
 		return err
+	}
+	if a.Kind == GitHubApp {
+		// The App's key signs requests for tokens; it is not itself sent.
+		return errors.New("it signs in as a GitHub App, which only the GitHub tools can use")
 	}
 	value, err := r.Resolve(workspace, a.Secret)
 	if err != nil {

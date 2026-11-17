@@ -16,6 +16,7 @@ import (
 	"strconv"
 
 	"github.com/bobbydeveaux/weir/engine"
+	"github.com/bobbydeveaux/weir/internal/secrets"
 	"github.com/bobbydeveaux/weir/runner"
 	"github.com/bobbydeveaux/weir/spec"
 	"github.com/bobbydeveaux/weir/worker"
@@ -103,6 +104,7 @@ func New(eng *engine.Engine, reg *worker.Registry, opts ...Option) http.Handler 
 	})
 	mux.HandleFunc("POST /v1/templates/{key}", s.template)
 	mux.HandleFunc("PUT /v1/connections/{name}", s.connection)
+	mux.HandleFunc("POST /v1/connections/{name}/check", s.checkConnection)
 	mux.HandleFunc("POST /v1/runs", s.start)
 	mux.HandleFunc("GET /v1/runs/{id}", s.run)
 	mux.HandleFunc("GET /v1/runs/{id}/stream", s.streamRun)
@@ -403,6 +405,10 @@ func (s *server) connection(w http.ResponseWriter, r *http.Request) {
 			reply(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
+		if in.Auth.Kind == secrets.GitHubApp {
+			reply(w, http.StatusBadRequest, map[string]string{"error": "an MCP server cannot be signed in to as a GitHub App"})
+			return
+		}
 		to := engine.Endpoint{Connection: r.PathValue("name"), URL: in.BaseURL, Workspace: s.in(r).Workspace(), Auth: in.Auth}
 		tools, err := worker.DiscoverMCP(r.Context(), s.reg, to)
 		if err != nil {
@@ -622,4 +628,34 @@ func (s *server) file(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Weir-File-Sha256", rec.SHA256)
 	_, _ = io.Copy(w, body)
+}
+
+// checkConnection reports whether Weir can sign in to a connection, without
+// doing anything on it. It is how a person setting one up sees that it worked.
+// Only a connection that signs in as a GitHub App can be checked this way.
+func (s *server) checkConnection(w http.ResponseWriter, r *http.Request) {
+	to, err := s.in(r).Connection(r.Context(), r.PathValue("name"))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	out := map[string]any{"name": to.Connection}
+	if to.Auth.Secret != "" {
+		out["secret_found"], out["secret_read_from"] = s.reg.SecretStatus(to.Workspace, to.Auth.Secret)
+	}
+	if to.Auth.Kind != secrets.GitHubApp {
+		out["checked"], out["detail"] = false, "only a connection that signs in as a GitHub App can be checked; this one is used as it is"
+		reply(w, http.StatusOK, out)
+		return
+	}
+	app, err := s.reg.GitHubApp(r.Context(), nil, to)
+	if err != nil {
+		// The secret is missing or GitHub refused it. Either way the person
+		// needs to know why, and the reason never holds a value.
+		out["checked"], out["ok"], out["detail"] = true, false, err.Error()
+		reply(w, http.StatusOK, out)
+		return
+	}
+	out["checked"], out["ok"], out["github_app"] = true, true, app
+	reply(w, http.StatusOK, out)
 }

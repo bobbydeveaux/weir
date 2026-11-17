@@ -70,6 +70,7 @@ type Registry struct {
 	handlers   map[string]Handler
 	tools      map[string]Tool
 	workspaces map[string]Preparer
+	github     githubTokens
 
 	// Secrets finds the value of a connection's secret when a call is made.
 	// NewRegistry sets it to read this process's environment.

@@ -44,7 +44,7 @@ Defining work:
   publish <file.yaml>              Publish a workflow as a new version
   template <key> --user <text>     Publish a prompt or decide template as a new version
   connection <name> <base-url>     Create or update a third party
-                                   [--auth bearer|header|basic] [--secret env:NAME|file:name]
+                                   [--auth bearer|header|basic|github-app] [--secret env:NAME|file:name] [--app <id>]
                                    [--header <name>] [--username <name>] [--mcp] [--read-only] [--workspace default]
                                    [--webhook github|hmac|none] [--webhook-secret env:NAME|file:name]
                                    [--webhook-header <name>] [--webhook-event-header <name>]
@@ -374,10 +374,11 @@ func (a *app) template(args []string) error {
 func (a *app) connection(args []string) error {
 	fs, _ := a.flags("connection")
 	workspace := fs.String("workspace", "default", "the workspace the connection belongs to")
-	kind := fs.String("auth", "", "how to sign in: bearer, header or basic")
+	kind := fs.String("auth", "", "how to sign in: bearer, header, basic or github-app")
 	secret := fs.String("secret", "", "the secret to sign in with, by reference: env:NAME or file:name")
 	header := fs.String("header", "", "the header to send, for --auth header")
 	username := fs.String("username", "", "the user name, for --auth basic")
+	app := fs.String("app", "", "the GitHub App's client id or App id, for --auth github-app")
 	mcp := fs.Bool("mcp", false, "the address is an MCP server, whose tools join the workspace")
 	readOnly := fs.Bool("read-only", false, "with --mcp: treat every tool as a read")
 	hookKind := fs.String("webhook", "", "receive webhooks signed this way: github or hmac (none switches it off)")
@@ -397,7 +398,7 @@ func (a *app) connection(args []string) error {
 	if err != nil {
 		return err
 	}
-	auth := engine.Auth{Kind: *kind, Secret: *secret, Header: *header, Username: *username}
+	auth := engine.Auth{Kind: *kind, Secret: *secret, Header: *header, Username: *username, App: *app}
 	if *mcp {
 		// Ask the server what it offers now, signed in as the connection.
 		to := engine.Endpoint{Connection: pos[0], URL: pos[1], Workspace: *workspace, Auth: auth}
