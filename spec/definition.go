@@ -230,7 +230,17 @@ func (d *Definition) Validate(opts ValidateOptions) error {
 		}
 	}
 	for i, t := range d.Triggers {
-		if !eventPattern.MatchString(t.Event) {
+		switch {
+		case t.Event != "" && t.Schedule != "":
+			add("triggers[%d]: a trigger has an event or a schedule, not both", i)
+		case t.Schedule != "":
+			if _, err := ParseSchedule(t.Schedule); err != nil {
+				add("triggers[%d]: schedule: %v", i, err)
+			}
+			if t.When != "" {
+				add("triggers[%d]: when applies to an event, not to a schedule", i)
+			}
+		case !eventPattern.MatchString(t.Event):
 			add("triggers[%d]: event %q must be lower-case words joined by dots, such as order.placed", i, t.Event)
 		}
 		if t.When != "" {
@@ -467,15 +477,20 @@ func (h Hook) Matches(eventType string) bool {
 	return false
 }
 
-// Trigger starts a run when a matching event arrives.
+// Trigger starts a run: when a matching event arrives, or on a schedule. It
+// has an event or a schedule, never both.
 type Trigger struct {
 	// Event is the type of event to match, such as "treaty.uploaded".
-	Event string `yaml:"event" json:"event"`
+	Event string `yaml:"event,omitempty" json:"event,omitempty"`
+	// Schedule is a five-field cron expression, in UTC, such as
+	// "0 7 * * 1-5" for seven in the morning on weekdays.
+	Schedule string `yaml:"schedule,omitempty" json:"schedule,omitempty"`
 	// When, if set, must be true for the event to start a run. It sees the
 	// event as `event`.
 	When string `yaml:"when,omitempty" json:"when,omitempty"`
 	// Input builds the run's input from the event. Left out, the run's input
-	// is the event's data.
+	// is the event's data. For a schedule, the event is {"type": "schedule",
+	// "data": {"at": <when it was due>}}, and with no mapping the input is {}.
 	Input map[string]any `yaml:"input,omitempty" json:"input,omitempty"`
 }
 

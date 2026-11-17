@@ -169,13 +169,16 @@ func (e *Engine) Events(ctx context.Context, limit int) (json.RawMessage, error)
 		FROM inbound_events WHERE workspace_id = $1::uuid ORDER BY received_at DESC LIMIT $2`, e.workspace, limit)
 }
 
-// Triggers lists which events start which workflows, from their live versions.
+// Triggers lists what starts which workflows, from their live versions: an
+// event, or a schedule with the time it is next due.
 func (e *Engine) Triggers(ctx context.Context) (json.RawMessage, error) {
 	return e.list(ctx, `
-		SELECT t->>'event' AS event, d.namespace, d.name, v.version, t->>'when' AS "when"
+		SELECT t.value->>'event' AS event, t.value->>'schedule' AS schedule, d.namespace, d.name, v.version, t.value->>'when' AS "when",
+			s.next_at, s.last_at, s.last_error
 		FROM definitions d
 		JOIN aliases a ON a.definition_id = d.id AND a.name = 'live'
 		JOIN definition_versions v ON v.id = a.version_id
-		CROSS JOIN LATERAL jsonb_array_elements(COALESCE(v.spec->'triggers', '[]'::jsonb)) t
-		WHERE d.workspace_id = $1::uuid ORDER BY 1, 2, 3`, e.workspace)
+		CROSS JOIN LATERAL jsonb_array_elements(COALESCE(v.spec->'triggers', '[]'::jsonb)) WITH ORDINALITY AS t(value, n)
+		LEFT JOIN schedules s ON s.definition_id = d.id AND s.trigger_index = t.n - 1
+		WHERE d.workspace_id = $1::uuid ORDER BY 1 NULLS LAST, 2, 3, 4`, e.workspace)
 }
