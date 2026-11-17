@@ -1,8 +1,11 @@
+<!-- Title: "#17: Add credentials on a connection". Branch: feature/issue-17-credentials. Every commit starts "#17: ". -->
+
 ## What changed, and why
 
 ## To-do item
 
 Closes #
+
 The line from `docs/build/02-epics.md`:
 
 ## How it was tested

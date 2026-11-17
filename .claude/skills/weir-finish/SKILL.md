@@ -42,8 +42,9 @@ Write what is true now. Remove any sentence your change has made false, includin
 
 ## 5. Commit and open a pull request
 
-- One idea per pull request, on a branch, never straight to `main`.
-- The message says what changed and why, in plain sentences.
+- One issue per pull request, on a branch named after it, never straight to `main`.
+- Every commit subject and the pull request title start with the issue number: `#17: Add credentials on a connection`. The description says `Closes #17`. Use the `weir-commit` skill; CI refuses anything else.
+- After the number, the message says what changed and why, in plain sentences.
 - Fill in the pull request template: what changed, how it was tested, what was not tested, and which to-do item it closes.
 
 ## 6. Say what happened

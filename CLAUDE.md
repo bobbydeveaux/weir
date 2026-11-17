@@ -55,9 +55,22 @@ These are the reasons Weir exists. A change that relaxes one needs a maintainer'
 - **Migrations:** add a new numbered file under `engine/store/migrations/`. Never edit one that has been released.
 - **Do not commit** secrets, keys, tokens, a person's email address, or paths from your own machine.
 
+## Naming
+
+Every change closes one issue, and says so in four places. CI checks them (the `Naming` job), and the `weir-commit` skill has the detail.
+
+| Where | Form |
+|---|---|
+| Branch | `feature/issue-17-credentials` (or `fix/`, `docs/`, `chore/`) |
+| Every commit subject | `#17: Add credentials on a connection` |
+| Pull request title | `#17: Add credentials on a connection` |
+| Pull request description | `Closes #17` |
+
+Write commit messages with `-m` or `-F`, not in an editor: git deletes a line that starts with `#` when a message is edited by hand.
+
 ## Working alongside other agents
 
-- Do one item from the to-do list at a time, on a branch, and open a pull request. Do not commit to `main`.
+- Do one item from the to-do list at a time, on a branch named after its issue, and open a pull request. `main` accepts nothing else.
 - Say which item you are taking before you start, so that two sessions do not do the same work. Every open item in the to-do list ends with its GitHub issue number: comment there. Labels (`epic:NN-…`) group issues by epic.
 - If you add an item to the list, open an issue for it and put the number on the line.
 - If you find the to-do list is wrong (something marked done is not, or the reverse), fix the list in your change and say so.

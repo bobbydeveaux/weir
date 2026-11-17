@@ -110,6 +110,7 @@ A repository that builds, tests and runs with one command.
 - [x] Migrations tool wired in, with an empty first migration
 - [x] CI that runs format, vet and tests for the engine and a type check and build for the console, and blocks merges on failure (`main` is protected: pull requests only, both jobs must pass)
 - [x] Licence, contributing guide, security policy
+- [x] Branches, commits and pull requests named after the issue they close (`feature/issue-17-…`, `#17: …`, `Closes #17`), checked by CI on every pull request (#65)
 
 ### 1. The contract
 
