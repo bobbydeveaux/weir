@@ -219,7 +219,7 @@ func (h *harness) setUpAllKinds() *thirdParty {
 	tp := newThirdParty(h.t)
 	h.template("route")
 	h.template("fix")
-	if err := h.eng.PutConnection(h.ctx, "detector", tp.server.URL); err != nil {
+	if err := h.eng.PutConnection(h.ctx, "detector", tp.server.URL, engine.Auth{}); err != nil {
 		h.t.Fatal(err)
 	}
 	h.reg.Register("test.open_issue", func(context.Context, worker.Call) (json.RawMessage, error) {
@@ -603,7 +603,7 @@ func TestAnExternalStepPollsUntilItsConditionHolds(t *testing.T) {
 		}
 		return `{"status": "done", "finding": "gone"}`
 	}
-	if err := h.eng.PutConnection(h.ctx, "scanner", tp.server.URL); err != nil {
+	if err := h.eng.PutConnection(h.ctx, "scanner", tp.server.URL, engine.Auth{}); err != nil {
 		t.Fatal(err)
 	}
 	h.publish(`

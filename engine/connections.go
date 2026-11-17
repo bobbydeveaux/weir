@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/bobbydeveaux/weir/internal/secrets"
 )
 
 // ConnectionTool is one tool an MCP connection offers.
@@ -28,14 +30,22 @@ type WorkspaceTool struct {
 	Class       string         `json:"class"`
 	InputSchema map[string]any `json:"input_schema"`
 	Connection  string         `json:"connection"`
-	// URL and Remote are where and under what name the tool is called.
-	URL    string `json:"-"`
-	Remote string `json:"-"`
+	// Remote is the tool's name on its server, and Endpoint is where the
+	// server is and how to sign in to it.
+	Remote   string   `json:"-"`
+	Endpoint Endpoint `json:"-"`
 }
 
 // PutMCPConnection creates or updates a connection to an MCP server, with the
 // tools the server offered. The tools are this workspace's alone.
-func (e *Engine) PutMCPConnection(ctx context.Context, name, url string, readOnly bool, tools []ConnectionTool) error {
+func (e *Engine) PutMCPConnection(ctx context.Context, name, url string, readOnly bool, auth Auth, tools []ConnectionTool) error {
+	if err := auth.Check(); err != nil {
+		return fmt.Errorf("connection %s: %w", name, err)
+	}
+	kind := auth.Kind
+	if kind == "" {
+		kind = secrets.None
+	}
 	if strings.Contains(name, ".") {
 		return errors.New("a connection's name cannot contain a dot")
 	}
@@ -54,11 +64,14 @@ func (e *Engine) PutMCPConnection(ctx context.Context, name, url string, readOnl
 		return err
 	}
 	_, err = e.pool.Exec(ctx, `
-		INSERT INTO connections (workspace_id, name, base_url, kind, read_only, tools, synced_at)
-		VALUES ($1::uuid, $2, $3, 'mcp', $4, $5::jsonb, now())
+		INSERT INTO connections (workspace_id, name, base_url, kind, read_only, tools, synced_at,
+			auth_kind, secret_ref, auth_header, auth_username)
+		VALUES ($1::uuid, $2, $3, 'mcp', $4, $5::jsonb, now(), $6, NULLIF($7, ''), NULLIF($8, ''), NULLIF($9, ''))
 		ON CONFLICT (workspace_id, name) DO UPDATE
-		SET base_url = EXCLUDED.base_url, kind = 'mcp', read_only = EXCLUDED.read_only, tools = EXCLUDED.tools, synced_at = now()`,
-		e.workspace, name, url, readOnly, string(raw))
+		SET base_url = EXCLUDED.base_url, kind = 'mcp', read_only = EXCLUDED.read_only, tools = EXCLUDED.tools, synced_at = now(),
+			auth_kind = EXCLUDED.auth_kind, secret_ref = EXCLUDED.secret_ref, auth_header = EXCLUDED.auth_header,
+			auth_username = EXCLUDED.auth_username`,
+		e.workspace, name, url, readOnly, string(raw), kind, auth.Secret, auth.Header, auth.Username)
 	return err
 }
 
@@ -68,13 +81,17 @@ func (e *Engine) workspaceTool(ctx context.Context, workspace, name string) (*Wo
 	if !ok {
 		return nil, fmt.Errorf("tool %s: %w", name, ErrNotFound)
 	}
-	var url, raw string
+	var raw string
 	err := e.pool.QueryRow(ctx, `
-		SELECT base_url, tools::text FROM connections
-		WHERE workspace_id = $1::uuid AND name = $2 AND kind = 'mcp'`, workspace, connection).Scan(&url, &raw)
+		SELECT tools::text FROM connections
+		WHERE workspace_id = $1::uuid AND name = $2 AND kind = 'mcp'`, workspace, connection).Scan(&raw)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("tool %s: %w", name, ErrNotFound)
 	}
+	if err != nil {
+		return nil, err
+	}
+	ep, err := e.endpoint(ctx, e.pool, workspace, connection)
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +102,7 @@ func (e *Engine) workspaceTool(ctx context.Context, workspace, name string) (*Wo
 	for _, t := range tools {
 		if t.Name == remote {
 			return &WorkspaceTool{Name: name, Description: t.Description, Class: t.Class, InputSchema: t.InputSchema,
-				Connection: connection, URL: url, Remote: remote}, nil
+				Connection: connection, Remote: remote, Endpoint: ep}, nil
 		}
 	}
 	return nil, fmt.Errorf("tool %s: %w", name, ErrNotFound)

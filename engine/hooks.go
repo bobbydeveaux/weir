@@ -56,6 +56,8 @@ type HookDelivery struct {
 	// URL is where to post Body.
 	URL  string
 	Body json.RawMessage
+	// To is the connection the hook goes to, for signing the request.
+	To Endpoint
 }
 
 // DeliverHooks sends every hook that is due, one at a time, using send. A
@@ -90,9 +92,9 @@ func (e *Engine) DeliverHooks(ctx context.Context, send func(context.Context, Ho
 			if err := json.Unmarshal([]byte(payload), &p); err != nil {
 				return err
 			}
-			base, sendErr := e.connectionURL(ctx, tx, workspace, p.Connection)
+			to, sendErr := e.endpoint(ctx, tx, workspace, p.Connection)
 			if sendErr == nil {
-				sendErr = send(ctx, HookDelivery{ID: fmt.Sprintf("hook-%d", id), URL: base + p.Path, Body: p.Body})
+				sendErr = send(ctx, HookDelivery{ID: fmt.Sprintf("hook-%d", id), URL: to.URL + p.Path, Body: p.Body, To: to})
 			}
 			if sendErr == nil {
 				delivered++

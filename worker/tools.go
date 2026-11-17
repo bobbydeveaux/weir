@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/bobbydeveaux/weir/engine"
+	"github.com/bobbydeveaux/weir/internal/secrets"
 	"github.com/bobbydeveaux/weir/runner"
 )
 
@@ -122,7 +123,7 @@ func CallTool(ctx context.Context, eng *engine.Engine, reg *Registry, token, nam
 		// Not one of the server's own tools: look among the MCP connections
 		// of the workspace this run belongs to, and nowhere else.
 		if remote, findErr := eng.ToolForRun(ctx, grant.RunID, name); findErr == nil {
-			server := MCPServer{Name: remote.Connection, URL: remote.URL, HTTP: mcpClient}
+			server := MCPServer{Name: remote.Connection, URL: remote.Endpoint.URL, HTTP: mcpClient, reg: reg, to: remote.Endpoint}
 			t, ok = Tool{Description: remote.Description, InputSchema: remote.InputSchema, Class: remote.Class,
 				Handler: func(ctx context.Context, c Call) (json.RawMessage, error) {
 					return server.call(ctx, remote.Remote, c.Input)
@@ -161,7 +162,7 @@ func CallTool(ctx context.Context, eng *engine.Engine, reg *Registry, token, nam
 // connection and a path, and never sees the address or any credential.
 func RegisterHTTPTools(reg *Registry, eng *engine.Engine, client *http.Client) {
 	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
+		client = &http.Client{Timeout: 30 * time.Second, CheckRedirect: secrets.SameHost}
 	}
 	schema := func(withBody bool) map[string]any {
 		props := map[string]any{
@@ -186,12 +187,16 @@ func RegisterHTTPTools(reg *Registry, eng *engine.Engine, client *http.Client) {
 			if !strings.HasPrefix(in.Path, "/") || strings.Contains(in.Path, "://") {
 				return nil, errors.New("path must start with a slash and stay on the connection's own address")
 			}
-			base, err := eng.ConnectionURL(ctx, c.RunID, in.Connection)
+			to, err := eng.Endpoint(ctx, c.RunID, in.Connection)
 			if err != nil {
 				return nil, err
 			}
-			req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(base, "/")+in.Path, bytes.NewReader(in.Body))
+			req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(to.URL, "/")+in.Path, bytes.NewReader(in.Body))
 			if err != nil {
+				return nil, err
+			}
+			// The agent names a connection and never sees its credential.
+			if err := reg.sign(req, to); err != nil {
 				return nil, err
 			}
 			if len(in.Body) > 0 {

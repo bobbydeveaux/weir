@@ -386,6 +386,8 @@ export interface Connection {
 	/** For an MCP connection: what the server offered when last asked. */
 	tools: Tool[] | null;
 	synced_at: string | null;
+	/** How Weir signs in. The secret is a reference such as env:NAME, never a value. */
+	auth: { kind: string; secret?: string; header?: string; username?: string } | null;
 	has_secret: boolean;
 	created_at: string;
 }

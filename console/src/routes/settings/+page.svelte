@@ -60,7 +60,7 @@
 	<section class="panel">
 		<div class="panel-head">
 			<h2>Connections</h2>
-			<span class="muted small">Addresses for external steps and MCP servers that bring tools, in workspace <b class="mono">{session.workspace}</b>. Secrets are never shown.</span>
+			<span class="muted small">Addresses for external steps and MCP servers that bring tools, in workspace <b class="mono">{session.workspace}</b>. Weir holds the name of a secret, never its value.</span>
 		</div>
 		{#if connections.error && !connections.data}
 			<div class="panel-body"><ErrorNote error={connections.error} what="connections" /></div>
@@ -81,7 +81,7 @@
 							<th>Kind</th>
 							<th>Address</th>
 							<th>Tools</th>
-							<th>Secret</th>
+							<th>Signs in with</th>
 							<th>Created</th>
 						</tr>
 					</thead>
@@ -104,7 +104,14 @@
 									{/if}
 								</td>
 								<td>
-									{#if c.has_secret}<span class="tag live">set</span>{:else}<span class="tag">none</span>{/if}
+									{#if c.auth && c.auth.kind !== 'none'}
+										<span class="tag live">{c.auth.kind}</span>
+										<div class="muted small mono">
+											{c.auth.secret}{#if c.auth.header} as {c.auth.header}{/if}{#if c.auth.username} for {c.auth.username}{/if}
+										</div>
+									{:else}
+										<span class="tag">none</span>
+									{/if}
 								</td>
 								<td><Time at={c.created_at} /></td>
 							</tr>

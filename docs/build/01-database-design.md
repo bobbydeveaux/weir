@@ -76,7 +76,7 @@ erDiagram
 
 **`handlers`** — the deterministic handlers that workers have registered, with their input and output schemas and the name of any undo handler. Publishing a definition checks its handler names against this table.
 
-**`connections`** — a named third party: base address, authentication method, the sites it may reach, and a reference to where the secret lives. The secret itself is never stored here.
+**`connections`** — a named third party, per workspace: its address, whether it is a plain HTTP address or an MCP server (with the tools it offered), and how Weir signs in to it. Signing in is a kind (`bearer`, `header` or `basic`) and `secret_ref`, a reference such as `env:GITHUB_TOKEN`. The secret itself is never stored here or anywhere else in the database: it is read from the server's environment or a file when a call is made, and a workspace can name only its own. The sites a connection may reach are not recorded yet.
 
 **`tiers`** — named model sizes: provider, model, effort and context size.
 

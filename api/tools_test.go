@@ -208,7 +208,7 @@ func TestTheHTTPToolsGoThroughANamedConnection(t *testing.T) {
 		io.WriteString(w, `{"path": "`+r.URL.Path+`"}`)
 	}))
 	defer orders.Close()
-	if err := eng.PutConnection(ctx, "orders", orders.URL); err != nil {
+	if err := eng.PutConnection(ctx, "orders", orders.URL, engine.Auth{}); err != nil {
 		t.Fatal(err)
 	}
 	worker.RegisterHTTPTools(reg, eng, nil)

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/bobbydeveaux/weir/engine"
+	"github.com/bobbydeveaux/weir/internal/secrets"
 )
 
 // MCPServer is a remote MCP server whose tools Weir offers to agents. Agents
@@ -30,15 +31,23 @@ type MCPServer struct {
 	// Headers are sent with every request, for example to identify Weir.
 	Headers map[string]string
 	HTTP    *http.Client
+
+	// reg and to are set for a workspace's MCP connection: every request is
+	// signed as that connection.
+	reg *Registry
+	to  engine.Endpoint
 }
 
 // mcpClient is used to reach MCP servers when none is given.
-var mcpClient = &http.Client{Timeout: 60 * time.Second}
+// It may carry a credential, so it does not follow a redirect to another host.
+var mcpClient = &http.Client{Timeout: 60 * time.Second, CheckRedirect: secrets.SameHost}
 
 // DiscoverMCP asks an MCP server what tools it offers. A tool is a read only
 // if the server itself says so.
-func DiscoverMCP(ctx context.Context, url string) ([]engine.ConnectionTool, error) {
-	return MCPServer{Name: url, URL: url, HTTP: mcpClient}.discover(ctx)
+// The request is signed as the connection to, so that a server which needs a
+// credential can be asked.
+func DiscoverMCP(ctx context.Context, reg *Registry, to engine.Endpoint) ([]engine.ConnectionTool, error) {
+	return MCPServer{Name: to.Connection, URL: to.URL, HTTP: mcpClient, reg: reg, to: to}.discover(ctx)
 }
 
 // RegisterMCP asks the server for its tools and adds each to the registry,
@@ -154,6 +163,11 @@ func (s MCPServer) rpc(ctx context.Context, method string, params any) (json.Raw
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	for k, v := range s.Headers {
 		req.Header.Set(k, v)
+	}
+	if s.reg != nil {
+		if err := s.reg.sign(req, s.to); err != nil {
+			return nil, err
+		}
 	}
 	resp, err := s.HTTP.Do(req)
 	if err != nil {
