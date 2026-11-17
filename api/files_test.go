@@ -97,7 +97,7 @@ func TestAnAgentsFilesAreKeptForLaterStepsAndTheApplication(t *testing.T) {
 
 	agent := &writer{write: []runner.File{
 		{Name: "report.md", Data: []byte("# Report\n")},
-		{Name: ".github/workflows/ci.yml", Data: []byte("on: push\n")},
+		{Name: ".config/lint/rules.yml", Data: []byte("on: push\n")},
 		{Name: "notes/a file with spaces.txt", Data: []byte("hello")},
 	}}
 	w := &worker.Worker{Engine: eng, Handlers: reg, Runner: agent}
@@ -119,7 +119,7 @@ func TestAnAgentsFilesAreKeptForLaterStepsAndTheApplication(t *testing.T) {
 		names = append(names, f.Name+"="+string(f.Data))
 	}
 	sort.Strings(names)
-	if got := strings.Join(names, "|"); got != ".github/workflows/ci.yml=on: push\n|notes/a file with spaces.txt=hello|report.md=# Report\n" {
+	if got := strings.Join(names, "|"); got != ".config/lint/rules.yml=on: push\n|notes/a file with spaces.txt=hello|report.md=# Report\n" {
 		t.Errorf("the review step was given %q", got)
 	}
 	// And an expression can see what was written, without the bytes.

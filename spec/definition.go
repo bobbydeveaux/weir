@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	ignore "github.com/sabhiram/go-gitignore"
 	"gopkg.in/yaml.v3"
 
 	"github.com/bobbydeveaux/weir/internal/secrets"
@@ -413,6 +414,16 @@ func validateAI(s *Step, at string, opts ValidateOptions, add func(string, ...an
 		if w.MaxMegabytes < 0 || w.MaxMegabytes > MaxWriteMegabytes {
 			add("%s: writes.max_megabytes must be between 1 and %d", at, MaxWriteMegabytes)
 		}
+		for name, rules := range map[string][]string{"only": w.Only, "never": w.Never} {
+			if len(rules) > MaxPathRules {
+				add("%s: writes.%s lists more than %d paths", at, name, MaxPathRules)
+			}
+			for _, rule := range rules {
+				if strings.TrimSpace(rule) == "" || strings.HasPrefix(rule, "!") || strings.HasPrefix(rule, "#") {
+					add("%s: writes.%s: %q is not a path pattern, such as *_test.go or billing/", at, name, rule)
+				}
+			}
+		}
 	}
 	if s.Shell != nil {
 		if len(s.Shell.Hosts) > MaxShellHosts {
@@ -590,6 +601,64 @@ type Writes struct {
 	MaxFiles int `yaml:"max_files,omitempty" json:"max_files,omitempty"`
 	// MaxMegabytes is the most those files may add up to.
 	MaxMegabytes int `yaml:"max_megabytes,omitempty" json:"max_megabytes,omitempty"`
+	// Only, when set, lists the only paths the agent may change, in the form
+	// a .gitignore uses. A step that may write tests and nothing else says so here.
+	Only []string `yaml:"only,omitempty" json:"only,omitempty"`
+	// Never lists paths the agent may not change, in the same form.
+	Never []string `yaml:"never,omitempty" json:"never,omitempty"`
+	// Protected says whether the paths in ProtectedPaths are off limits. It
+	// is true unless a step sets it to false.
+	Protected *bool `yaml:"protected,omitempty" json:"protected,omitempty"`
+}
+
+// ProtectedPaths may not be changed by an agent unless its step says
+// otherwise, because changing them changes what runs later: a repository's
+// own records, its automation, and the instructions other agents read.
+var ProtectedPaths = []string{".git/", ".github/workflows/", ".claude/", "CLAUDE.md", "AGENTS.md"}
+
+// MaxPathRules is the most patterns a step may list under only or never.
+const MaxPathRules = 50
+
+// Refuse reports the first of paths that the step may not change, and why.
+// It returns "" when every path is allowed. A nil Writes still protects
+// ProtectedPaths.
+func (w *Writes) Refuse(paths []string) string {
+	var only, never []string
+	protect := true
+	if w != nil {
+		only, never = w.Only, w.Never
+		protect = w.Protected == nil || *w.Protected
+	}
+	protected := ignore.CompileIgnoreLines(ProtectedPaths...)
+	forbidden := ignore.CompileIgnoreLines(never...)
+	allowed := ignore.CompileIgnoreLines(only...)
+	for _, p := range paths {
+		switch {
+		case protect && protected.MatchesPath(p):
+			return fmt.Sprintf("%s is protected: an agent may not change it unless its step sets writes.protected to false", p)
+		case len(never) > 0 && forbidden.MatchesPath(p):
+			return fmt.Sprintf("%s is a path this step may never change", p)
+		case len(only) > 0 && !allowed.MatchesPath(p):
+			return fmt.Sprintf("%s is not one of the paths this step may change", p)
+		}
+	}
+	return ""
+}
+
+// Rules describes the path rules in words, for telling an agent. It returns
+// "" when there are none beyond the protected paths.
+func (w *Writes) Rules() string {
+	var parts []string
+	if w != nil && len(w.Only) > 0 {
+		parts = append(parts, "You may change only paths matching: "+strings.Join(w.Only, ", ")+".")
+	}
+	if w != nil && len(w.Never) > 0 {
+		parts = append(parts, "You must never change paths matching: "+strings.Join(w.Never, ", ")+".")
+	}
+	if w == nil || w.Protected == nil || *w.Protected {
+		parts = append(parts, "You must never change: "+strings.Join(ProtectedPaths, ", ")+".")
+	}
+	return strings.Join(parts, " ")
 }
 
 // The limits on what an agent may write: the defaults, and the most a

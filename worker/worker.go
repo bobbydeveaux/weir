@@ -470,6 +470,11 @@ func (w *Worker) ai(ctx context.Context, work *engine.Work) error {
 		}}
 	}
 	if st.Writes != nil || st.Workspace != nil {
+		// The agent is told which paths are off limits. That is a courtesy:
+		// what it changed is checked below, whatever it was told.
+		if rules := st.Writes.Rules(); rules != "" {
+			req.System = strings.TrimSpace(req.System + "\n\n" + rules)
+		}
 		// A step with a workspace always has limits on what it may change.
 		limit := runner.WriteLimit{}
 		limit.MaxFiles, limit.MaxBytes = st.Writes.Limits()
@@ -498,8 +503,15 @@ func (w *Worker) ai(ctx context.Context, work *engine.Work) error {
 	// What the agent wrote is kept before the step completes, and recorded as
 	// part of completing it. If the step does not complete, it is dropped.
 	produced := make([]engine.NewFile, 0, len(res.Files))
+	paths := make([]string, 0, len(res.Files))
 	for _, f := range res.Files {
 		produced = append(produced, engine.NewFile{Path: f.Name, Data: f.Data, Deleted: f.Deleted})
+		paths = append(paths, f.Name)
+	}
+	// One change to a path the step may not touch, and nothing is kept.
+	if why := st.Writes.Refuse(paths); why != "" {
+		return w.Engine.Fail(done, work.Token, engine.Failure{Type: "path_forbidden", Message: why,
+			Retryable: true, Actor: w.ID, CostUSD: res.Usage.CostUSD}, call)
 	}
 	kept, err := w.Engine.KeepFiles(done, work.RunID, produced)
 	if err != nil {

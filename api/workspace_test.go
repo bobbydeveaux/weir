@@ -46,6 +46,9 @@ steps:
 // editor stands in for an agent in a prepared directory: it has the
 // directory prepared, as a real runner would, then reports changes.
 type editor struct {
+	// changes, when set, is what the agent reports instead of the usual two files.
+	changes  []runner.File
+	system   string
 	prepared string
 	limit    *runner.WriteLimit
 	input    string
@@ -70,8 +73,11 @@ func (e *editor) Run(ctx context.Context, req runner.RunRequest) (runner.RunResu
 		return res, err
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "prepared.txt"))
-	e.prepared, e.limit = string(data), req.Writes
+	e.prepared, e.limit, e.system = string(data), req.Writes, req.System
 	res.Files = []runner.File{{Name: "main.go", Data: []byte("package main\n")}, {Name: "old.go", Deleted: true}}
+	if e.changes != nil {
+		res.Files = e.changes
+	}
 	return res, nil
 }
 
@@ -156,5 +162,79 @@ func TestAStepsDirectoryIsPreparedAndItsChangesAreKept(t *testing.T) {
 	}
 	if code := call(t, srv.URL, "GET", "/v1/runs/"+runID+"/files/fix/old.go", "", "", nil); code != http.StatusNotFound {
 		t.Errorf("downloading a deleted file = %d, want 404", code)
+	}
+}
+
+func TestAChangeToAForbiddenPathFailsTheStepAndKeepsNothing(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	pool := testdb.New(ctx, t)
+	eng, err := engine.New(ctx, pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng.Files = blob.NewPostgres(pool)
+	reg := worker.NewRegistry()
+	reg.RegisterWorkspace("test.checkout", func(context.Context, worker.Workspace) (runner.Prepared, error) {
+		return runner.Prepared{}, nil
+	})
+	if _, err := eng.PublishTemplate(ctx, "fix", engine.Template{System: "s", User: "u"}, "test"); err != nil {
+		t.Fatal(err)
+	}
+	testsOnly := strings.Replace(workspaceWorkflow, "    output:\n", "    writes: { only: [\"*_test.go\"], never: [\"billing/\"] }\n    output:\n", 1)
+	if _, err := eng.Publish(ctx, []byte(strings.Replace(testsOnly, `"*_test.go"`, `"!main.go"`, 1)), "test"); err == nil || !strings.Contains(err.Error(), "is not a path pattern") {
+		t.Fatalf("publish with a negated pattern = %v", err)
+	}
+	if _, err := eng.Publish(ctx, []byte(testsOnly), "test"); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+
+	attempt := func(changes ...runner.File) (status, detail string, files int) {
+		t.Helper()
+		runID, _, err := eng.StartRun(ctx, engine.StartRequest{Namespace: "code", Name: "fix", Requester: "alice", Input: json.RawMessage(`{"repo": "a/b"}`)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		agent := &editor{changes: changes}
+		w := &worker.Worker{Engine: eng, Handlers: reg, Runner: agent}
+		// Run until nothing is left, so that a later step of this run is not
+		// still waiting when the next run starts.
+		for {
+			found, err := w.RunOnce(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !found {
+				break
+			}
+		}
+		if !strings.Contains(agent.system, "*_test.go") || !strings.Contains(agent.system, "billing/") {
+			t.Errorf("the agent was not told the rules: %q", agent.system)
+		}
+		v, err := eng.Run(ctx, runID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var kept []json.RawMessage
+		raw, _ := eng.RunFiles(ctx, runID)
+		_ = json.Unmarshal(raw, &kept)
+		return v.Steps[0].Status, string(mustJSON(v)), len(kept)
+	}
+	test := runner.File{Name: "api/server_test.go", Data: []byte("package api\n")}
+
+	if status, detail, files := attempt(test); status != "succeeded" || files != 1 {
+		t.Errorf("a test file alone: step %s, %d file(s): %s", status, files, detail)
+	}
+	for name, change := range map[string]runner.File{
+		"is not one of the paths":                      {Name: "api/server.go", Data: []byte("package api\n")},
+		"may never change":                             {Name: "billing/charge_test.go", Data: []byte("package billing\n")},
+		"is protected":                                 {Name: ".github/workflows/ci_test.go", Data: []byte("x")},
+		"is not one of the paths this step may change": {Name: "old.go", Deleted: true},
+	} {
+		// The allowed file comes first: one bad change still means nothing is kept.
+		status, detail, files := attempt(test, change)
+		if status == "succeeded" || files != 0 || !strings.Contains(detail, name) {
+			t.Errorf("changing %s: step %s, %d file(s) kept, want a failure saying %q: %s", change.Name, status, files, name, detail)
+		}
 	}
 }
