@@ -10,9 +10,12 @@
 	const events = useQuery(() => api.events(100), { keep: true, refresh: () => 3000 });
 
 	// Triggers grouped by the event that sets them off.
+	const schedules = $derived((triggers.data ?? []).filter((t) => t.schedule));
+
 	const byEvent = $derived.by(() => {
 		const groups = new Map<string, NonNullable<typeof triggers.data>>();
 		for (const t of triggers.data ?? []) {
+			if (!t.event) continue; // schedules are listed in their own table
 			groups.set(t.event, [...(groups.get(t.event) ?? []), t]);
 		}
 		return [...groups.entries()];
@@ -34,7 +37,7 @@
 
 	<section class="panel">
 		<div class="panel-head">
-			<h2>Triggers <span class="n">{triggers.data?.length ?? 0}</span></h2>
+			<h2>Triggers <span class="n">{(triggers.data ?? []).filter((t) => t.event).length}</span></h2>
 			<span class="muted small">Which events start which workflows, from each workflow's live version</span>
 		</div>
 		{#if triggers.error && !triggers.data}
@@ -70,6 +73,38 @@
 			</div>
 		{/if}
 	</section>
+
+	{#if schedules.length > 0}
+		<section class="panel">
+			<div class="panel-head">
+				<h2>Schedules <span class="n">{schedules.length}</span></h2>
+				<span class="muted small">Workflows that start by themselves. Times are in UTC</span>
+			</div>
+			<div class="table-wrap">
+				<table class="table">
+					<thead>
+						<tr><th>Schedule</th><th>This starts</th><th>Next due</th><th>Last ran</th></tr>
+					</thead>
+					<tbody>
+						{#each schedules as t (t.namespace + '/' + t.name + t.schedule)}
+							<tr>
+								<td class="mono"><b>{t.schedule}</b></td>
+								<td class="mono">
+									<a href="/workflows/{t.namespace}/{t.name}">{t.namespace}/<b>{t.name}</b></a>
+									<span class="tag">v{t.version}</span>
+								</td>
+								<td>{#if t.next_at}<Time at={t.next_at} />{:else}<span class="muted">not set</span>{/if}</td>
+								<td>
+									{#if t.last_at}<Time at={t.last_at} />{:else}<span class="muted">never</span>{/if}
+									{#if t.last_error}<div class="tag write" title={t.last_error}>could not start</div>{/if}
+								</td>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
+		</section>
+	{/if}
 
 	<section class="panel">
 		<div class="panel-head">

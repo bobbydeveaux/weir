@@ -32,7 +32,7 @@ Then follow [the support inbox example](examples/support-inbox), which classifie
 | `external` steps | Call a third party, then resume on a callback with a one-time token, or poll until a condition holds |
 | Tools for agents | Every call goes through a proxy that checks it against the step's list and records it. Tools come from the server, from a workspace's MCP servers, and for GitHub |
 | Connections | A named address per workspace, HTTP or MCP, with a credential named by reference and never stored |
-| Events in | An application reports what happened, or a third party posts a signed webhook; triggers start the workflows that want it |
+| Events in | An application reports what happened, or a third party posts a signed webhook; triggers start the workflows that want it. A workflow can also start on a schedule |
 | Events out | Hooks to an application, signed if asked, retried until delivered; and live streams of a run's events |
 | Failure | `block`, `cancel` and `continue`; undo handlers run in reverse; a blocked run can be resumed or cancelled |
 | Tokens | One per attempt, stored hashed. A late, repeated or made-up completion changes nothing |
@@ -57,7 +57,6 @@ The full list, with an issue for each item, is [docs/build/02-epics.md](docs/bui
 - **Running an agent somewhere else.** The worker runs the agent beside itself; it cannot yet hand a step to an agent hosted on AgentCore, Fargate or Cloud Run.
 - **Pipes as packages.** The parts exist (connections, webhooks, tools), and GitHub has all three, but there is no installable package or catalogue.
 - **Parallel steps, fan-out and sub-workflows.** Steps run one at a time.
-- **Schedules.** A workflow starts on an event or a call, not yet on a timer.
 - **Tiers and sandbox settings in a definition.** They parse, and publishing says they are not enforced.
 - **A tagged release.** There is no version yet, and the contract will change before `v0.1.0`.
 
@@ -173,6 +172,24 @@ triggers:
 - The shared secret is named by reference and never stored, like a connection's credential. One workspace's secret does not verify another's webhooks.
 
 Not yet: Slack's signature scheme, and refusing an old request that is replayed without a delivery id.
+
+### Schedules
+
+A workflow can start by itself. Give a trigger a `schedule` in place of an `event`:
+
+```yaml
+triggers:
+  - schedule: "0 7 * * 1-5"        # 07:00 UTC, Monday to Friday
+    input: { due: event.data.at }   # optional; without it the run's input is {}
+```
+
+The schedule is a five-field cron expression: minute, hour, day of the month, month, day of the week. Each field is `*`, a number, a range (`1-5`), a list (`1,3,5`) or a step (`*/15`). Times are in UTC.
+
+- A schedule that is due starts exactly one run, however many workers are looking.
+- If Weir was not running when a schedule fell due, it fires once when Weir is back. It does not catch up on every time it missed.
+- Publishing a workflow without the schedule stops it. `GET /v1/triggers` lists each schedule with the time it is next due.
+
+Not yet: time zones other than UTC.
 
 ### Hooks, and checking they came from Weir
 

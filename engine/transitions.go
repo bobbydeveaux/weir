@@ -922,6 +922,8 @@ type Swept struct {
 	ExpiredLeases int
 	Timeouts      int
 	Escalations   int
+	// Scheduled is how many schedules came due.
+	Scheduled int
 }
 
 // Sweep deals with everything time has caught up with: attempts whose worker
@@ -929,6 +931,16 @@ type Swept struct {
 // several places at once.
 func (e *Engine) Sweep(ctx context.Context) (Swept, error) {
 	var out Swept
+	for {
+		fired, err := e.fireSchedule(ctx)
+		if err != nil {
+			return out, err
+		}
+		if !fired {
+			break
+		}
+		out.Scheduled++
+	}
 	for {
 		found := false
 		err := e.inTx(ctx, func(tx pgx.Tx) error {

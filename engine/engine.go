@@ -334,7 +334,11 @@ func (e *Engine) Publish(ctx context.Context, source []byte, by string) (*Publis
 			ON CONFLICT (definition_id, name)
 			DO UPDATE SET version_id = EXCLUDED.version_id, updated_by = EXCLUDED.updated_by, updated_at = now()`,
 			defID, versionID, by)
-		return err
+		if err != nil {
+			return err
+		}
+		// The live version's schedules replace whatever was there before.
+		return setSchedules(ctx, tx, defID, def)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("publish %s/%s: %w", def.Namespace, def.Name, err)

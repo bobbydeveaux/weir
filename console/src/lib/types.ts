@@ -54,7 +54,13 @@ export interface InboundEvent {
 
 /** One row of GET /v1/triggers: an event type and a workflow it starts. */
 export interface TriggerRow {
-	event: string;
+	/** The event that starts the workflow, or null for a schedule. */
+	event: string | null;
+	/** A cron expression in UTC, or null for an event. */
+	schedule: string | null;
+	next_at: string | null;
+	last_at: string | null;
+	last_error: string | null;
 	namespace: string;
 	name: string;
 	version: number;

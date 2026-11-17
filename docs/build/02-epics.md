@@ -23,7 +23,7 @@ A real workflow has run end to end from the command line with the Claude command
 | 8 External steps | Mostly done | Signing in with the machine's own cloud identity; allowed addresses |
 | 9 Gateway and decide | Mostly done | A live call to Jev and to Gemini Decisions (no keys yet); the Gemini command line; Codex steps with tools; a fallback provider; shadow mode; workload identity and a direct-call runner |
 | 10 AI steps | Mostly done | The `approve` class of tool; marking tool output as data; the full transcript (the prompt and the final reply are kept, the turns in between are not) |
-| 11 Triggers | Mostly done | A `decide` filter in a trigger; counters; a schedule trigger |
+| 11 Triggers | Mostly done | A `decide` filter in a trigger; counters |
 | 12 Hooks | Mostly done | Hooks on a single step |
 | 13 API and command line | Mostly done | Sign-in for people (the console takes a key today); a published API description; logs and metrics; the newer endpoints on the command line |
 | 14 Examples and conformance | Started | Two more examples; tests for all three; the conformance suite. A real application (agent-demo) runs on Weir, which the plan did not ask for |
@@ -239,7 +239,7 @@ How work is claimed, held and returned.
 - [x] The `match` rule, run on every event at no model cost (the event type and an optional `when`)
 - [ ] The optional `decide` filter, run only on events that pass the rule (#34)
 - [ ] Daily counters for matched, dropped and started (#35)
-- [ ] A schedule trigger (#36)
+- [x] A schedule trigger: a five-field cron expression in UTC on a trigger. A due schedule starts exactly one run, and one that was missed fires once. Not yet: time zones other than UTC (#36)
 - [x] Events and triggers: `POST /v1/events`, and `triggers:` enforced (event type, an optional `when`, an optional input mapping), so an application reports what happened and Weir finds the workflows. A repeated event starts nothing new. Not yet: a `decide` step in the trigger, and events arriving from a queue
 
 ### 12. Hooks
