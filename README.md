@@ -136,6 +136,32 @@ A secret is named in one of two ways, and a workspace can name only its own:
 
 Not yet: signing in with the machine's own cloud identity, with no secret at all, and limiting which addresses a connection may point at.
 
+### Webhooks from a third party
+
+A connection can also receive. The third party posts to an address on Weir when something happens, Weir checks the request really came from them, and it becomes an event that a workflow's trigger can start on.
+
+```bash
+export WEIR_SECRET__MY_APP__GH_WEBHOOK=…          # the same secret you give GitHub
+weir connection github https://api.github.com --workspace my-app \
+  --webhook github --webhook-secret env:GH_WEBHOOK
+# it receives github webhooks at /v1/webhooks/my-app/github
+```
+
+In GitHub, set the webhook's payload address to `https://<your weir>/v1/webhooks/my-app/github`, its content type to `application/json`, and its secret to the same value. A workflow then starts on it:
+
+```yaml
+triggers:
+  - event: github.pull_request          # the connection's name, then what happened
+    when: event.data.action == "opened"
+```
+
+- The sender cannot send Weir's headers or hold an API key, so the workspace and the connection are in the address and **the signature is the credential**. A request with a missing, wrong or tampered signature is refused and nothing is recorded.
+- `--webhook github` checks GitHub's `X-Hub-Signature-256`. `--webhook hmac` is for any sender that signs the body with HMAC-SHA256: name its headers with `--webhook-header` and `--webhook-event-header`.
+- The sender's delivery id is kept, so a delivery sent twice starts nothing new.
+- The shared secret is named by reference and never stored, like a connection's credential. One workspace's secret does not verify another's webhooks.
+
+Not yet: Slack's signature scheme, and refusing an old request that is replayed without a delivery id.
+
 ### Bedrock, Vertex AI and gateways
 
 An agent's command line is started with almost none of the server's environment, so that nothing on the machine can change how an agent behaves. To send Claude somewhere other than Anthropic's own API, name the variables to let through.

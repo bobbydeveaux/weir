@@ -45,6 +45,8 @@ Defining work:
   connection <name> <base-url>     Create or update a third party
                                    [--auth bearer|header|basic] [--secret env:NAME|file:name]
                                    [--header <name>] [--username <name>] [--mcp] [--read-only] [--workspace default]
+                                   [--webhook github|hmac|none] [--webhook-secret env:NAME|file:name]
+                                   [--webhook-header <name>] [--webhook-event-header <name>]
 
 Running work:
   run <namespace>/<name>           Start a run            [--input <json>] [--key <idempotency-key>]
@@ -347,6 +349,10 @@ func (a *app) connection(args []string) error {
 	username := fs.String("username", "", "the user name, for --auth basic")
 	mcp := fs.Bool("mcp", false, "the address is an MCP server, whose tools join the workspace")
 	readOnly := fs.Bool("read-only", false, "with --mcp: treat every tool as a read")
+	hookKind := fs.String("webhook", "", "receive webhooks signed this way: github or hmac (none switches it off)")
+	hookSecret := fs.String("webhook-secret", "", "the shared secret the sender signs with, by reference")
+	hookHeader := fs.String("webhook-header", "", "with --webhook hmac: the header that carries the signature")
+	hookEvent := fs.String("webhook-event-header", "", "with --webhook hmac: the header that says what happened")
 	pos, err := parse(fs, args, 2)
 	if err != nil {
 		return err
@@ -380,6 +386,23 @@ func (a *app) connection(args []string) error {
 			return err
 		}
 		fmt.Fprintf(a.out, "connection %s points at %s\n", pos[0], pos[1])
+	}
+	if *hookKind != "" {
+		hook := engine.Webhook{Kind: *hookKind, Secret: *hookSecret, Header: *hookHeader, EventHeader: *hookEvent}
+		if err := eng.SetWebhook(a.ctx, pos[0], hook); err != nil {
+			return err
+		}
+		if hook.Kind == engine.WebhookNone {
+			fmt.Fprintf(a.out, "it no longer receives webhooks\n")
+		} else {
+			found, readFrom := a.reg.SecretStatus(*workspace, hook.Secret)
+			state := "is set"
+			if !found {
+				state = "is NOT set yet; webhooks will be refused until it is"
+			}
+			fmt.Fprintf(a.out, "it receives %s webhooks at /v1/webhooks/%s/%s, checked with %s, read from %s, which %s\n",
+				hook.Kind, *workspace, pos[0], hook.Secret, readFrom, state)
+		}
 	}
 	if auth.Secret != "" {
 		// The secret is never given to Weir: say where the server reads it from.

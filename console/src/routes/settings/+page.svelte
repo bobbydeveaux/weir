@@ -112,6 +112,12 @@
 									{:else}
 										<span class="tag">none</span>
 									{/if}
+									{#if c.webhook}
+										<div class="muted small" title="Give this address to the sender. Requests are checked against {c.webhook.secret}.">
+											receives <b>{c.webhook.kind}</b> webhooks at
+											<span class="mono">/v1/webhooks/{session.workspace}/{c.name}</span>
+										</div>
+									{/if}
 								</td>
 								<td><Time at={c.created_at} /></td>
 							</tr>

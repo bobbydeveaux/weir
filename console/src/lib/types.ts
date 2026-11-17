@@ -388,6 +388,8 @@ export interface Connection {
 	synced_at: string | null;
 	/** How Weir signs in. The secret is a reference such as env:NAME, never a value. */
 	auth: { kind: string; secret?: string; header?: string; username?: string } | null;
+	/** How a third party signs what it sends to Weir through this connection. Null if it receives nothing. */
+	webhook: { kind: string; secret?: string; header?: string; event_header?: string } | null;
 	has_secret: boolean;
 	created_at: string;
 }
