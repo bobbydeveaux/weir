@@ -68,6 +68,7 @@ async function request<T>(method: string, path: string, opts: Options = {}): Pro
 	// Read the session before the first await, so callers inside an effect
 	// re-run when the workspace changes.
 	const headers: Record<string, string> = { Accept: 'application/json' };
+	if (session.key) headers['Authorization'] = `Bearer ${session.key}`;
 	if (opts.scoped !== false) headers['X-Weir-Workspace'] = session.workspace || 'default';
 	if (opts.write) {
 		if (!session.actor) {

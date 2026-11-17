@@ -51,6 +51,11 @@ Running work:
   approve <task-id>                Decide a waiting step  [--outcome approved] [--note <text>]
   resume <run-id>                  Restart a blocked run  [--budget <usd>]
 
+Access:
+  key create <name>                Make an API key        [--workspace default] [--role writer] [--act-as]
+  key list                         List a workspace's keys [--workspace default]
+  key revoke <key-id>              Stop a key working     [--workspace default]
+
 Other:
   version                          Print the version
 
@@ -61,6 +66,7 @@ Environment:
   WEIR_HTTP_ADDR     Address the API listens on (default :8080)
   WEIR_PUBLIC_URL    Address third parties use to reach the API (default http://localhost:8080)
   WEIR_RUNNER        How ai and decide steps run: cli, api or fake (default cli)
+  WEIR_ADMIN_KEY     Turns authentication on, and is the key that may do anything
 `
 
 func main() {
@@ -89,7 +95,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	commands := map[string]func([]string) error{
 		"migrate": a.migrate, "serve": a.serve, "publish": a.publish, "template": a.template,
 		"connection": a.connection, "run": a.start, "status": a.status, "tasks": a.tasks,
-		"approve": a.approve, "resume": a.resume, "mcp": a.mcp,
+		"approve": a.approve, "resume": a.resume, "mcp": a.mcp, "key": a.key,
 	}
 	switch args[0] {
 	case "version":
@@ -186,8 +192,17 @@ func (a *app) serve([]string) error {
 	case config.RunnerCLI:
 		// Claude runs steps by default. A step with `tier: codex` goes to Codex,
 		// so one workflow can have one model write a change and another review it.
-		claude := &runner.Claude{Models: map[string]string{"small": "haiku", "large": "opus"}}
-		codex := &runner.Codex{Model: a.getenv("WEIR_CODEX_MODEL")}
+		// An agent's command line sees almost none of this server's
+		// environment. WEIR_AGENT_ENV names what else to let through: the
+		// variables that send Claude to Bedrock or Vertex AI on the machine's
+		// own cloud identity, or to an AI gateway.
+		passed := names(a.getenv("WEIR_AGENT_ENV"))
+		models := map[string]string{"small": "haiku", "large": "opus"}
+		for tier, model := range pairs(a.getenv("WEIR_CLAUDE_MODELS")) {
+			models[tier] = model
+		}
+		claude := &runner.Claude{Models: models, ModelPrefix: a.getenv("WEIR_CLAUDE_MODEL_PREFIX"), Env: passed}
+		codex := &runner.Codex{Model: a.getenv("WEIR_CODEX_MODEL"), Env: passed}
 		// A decide step goes to the provider its workflow names. Steps that
 		// name none use Jev when it has a key, and Claude's small model otherwise.
 		router := runner.Router{
@@ -196,7 +211,8 @@ func (a *app) serve([]string) error {
 		}
 		for service, env := range map[string]string{runner.ServiceJev: "WEIR_TYPESAFE_KEY", runner.ServiceGeminiDecision: "WEIR_GEMINI_API_KEY"} {
 			if key := a.getenv(env); key != "" {
-				router.Deciders[service] = &runner.Decisions{Service: service, Key: key}
+				// The address can be changed, to go through a gateway or a proxy.
+				router.Deciders[service] = &runner.Decisions{Service: service, Key: key, BaseURL: a.getenv(strings.TrimSuffix(env, "KEY") + "URL")}
 			} else {
 				router.Deciders[service] = runner.NotSetUp{Provider: service, Hint: "set " + env}
 			}
@@ -226,7 +242,14 @@ func (a *app) serve([]string) error {
 	w := &worker.Worker{Engine: eng, Runner: r, Handlers: a.reg, ID: "weir-serve", CallbackURL: public,
 		ToolURL: "http://localhost" + cfg.HTTPAddr}
 
-	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: api.New(eng, a.reg), ReadHeaderTimeout: 10 * time.Second}
+	// With an admin key set, every request must carry a key. Without one the
+	// API trusts whoever calls it, which is only safe on a trusted network.
+	adminKey := a.getenv("WEIR_ADMIN_KEY")
+	access := "API keys are required"
+	if adminKey == "" {
+		access = "WARNING: no WEIR_ADMIN_KEY is set, so anyone who can reach this API can do anything"
+	}
+	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: api.New(eng, a.reg, api.WithAdminKey(adminKey)), ReadHeaderTimeout: 10 * time.Second}
 	errs := make(chan error, 2)
 	go func() { errs <- w.Run(a.ctx) }()
 	// Hear from Postgres when a run moves, so that streams send at once.
@@ -237,6 +260,7 @@ func (a *app) serve([]string) error {
 		}
 	}()
 	fmt.Fprintf(a.out, "weir is listening on %s with the %s runner; decisions use %s unless a step names a provider\n", cfg.HTTPAddr, cfg.Runner, decideWith)
+	fmt.Fprintln(a.out, access)
 
 	select {
 	case <-a.ctx.Done():
@@ -462,5 +486,84 @@ func (a *app) resume(args []string) error {
 		return err
 	}
 	fmt.Fprintf(a.out, "resumed %s\n", pos[0])
+	return nil
+}
+
+// names splits a comma-separated list, dropping blanks.
+func names(list string) []string {
+	var out []string
+	for _, item := range strings.Split(list, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+// pairs reads "a=b,c=d" into a map, ignoring anything that is not a pair.
+func pairs(list string) map[string]string {
+	out := map[string]string{}
+	for _, item := range names(list) {
+		if key, value, ok := strings.Cut(item, "="); ok && strings.TrimSpace(key) != "" && strings.TrimSpace(value) != "" {
+			out[strings.TrimSpace(key)] = strings.TrimSpace(value)
+		}
+	}
+	return out
+}
+
+// key manages API keys. It works on the database directly, so that the first
+// key can be made before any key exists.
+func (a *app) key(args []string) error {
+	if len(args) == 0 {
+		return errors.New("usage: weir key create <name> | list | revoke <key-id>")
+	}
+	fs, who := a.flags("key " + args[0])
+	workspace := fs.String("workspace", "default", "the workspace the key belongs to")
+	role := fs.String("role", engine.RoleWriter, "reader, writer or admin")
+	actAs := fs.Bool("act-as", false, "let the key name the person it is acting for")
+	want := map[string]int{"create": 1, "list": 0, "revoke": 1}
+	n, ok := want[args[0]]
+	if !ok {
+		return fmt.Errorf("unknown key command %q", args[0])
+	}
+	pos, err := parse(fs, args[1:], n)
+	if err != nil {
+		return err
+	}
+	root, _, done, err := a.engine()
+	if err != nil {
+		return err
+	}
+	defer done()
+	eng, err := root.In(a.ctx, *workspace)
+	if err != nil {
+		return err
+	}
+	switch args[0] {
+	case "create":
+		secret, key, err := eng.CreateKey(a.ctx, pos[0], *role, *actAs, *who)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(a.out, "key %s for workspace %s (%s)\n\n  %s\n\nThis is the only time it is shown. Send it as: Authorization: Bearer <key>\n",
+			key.Name, key.Workspace, key.Role, secret)
+	case "list":
+		keys, err := eng.Keys(a.ctx)
+		if err != nil {
+			return err
+		}
+		for _, k := range keys {
+			state := "active"
+			if k.RevokedAt != nil {
+				state = "revoked"
+			}
+			fmt.Fprintf(a.out, "%s  %-20s %-7s %s\n", k.ID, k.Name, k.Role, state)
+		}
+	case "revoke":
+		if err := eng.RevokeKey(a.ctx, pos[0]); err != nil {
+			return err
+		}
+		fmt.Fprintf(a.out, "key %s no longer works\n", pos[0])
+	}
 	return nil
 }

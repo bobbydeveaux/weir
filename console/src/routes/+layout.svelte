@@ -3,7 +3,7 @@
 	import { page } from '$app/state';
 	import { api } from '#lib/api.ts';
 	import { useQuery } from '#lib/query.svelte.ts';
-	import { health, session, setActor, setWorkspace, stale, tick } from '#lib/session.svelte.ts';
+	import { health, session, setActor, setKey, setWorkspace, stale, tick } from '#lib/session.svelte.ts';
 	import type { Snippet } from 'svelte';
 
 	let { children }: { children: Snippet } = $props();
@@ -44,6 +44,9 @@
 	});
 
 	let actorDraft = $state(session.actor);
+	let keyDraft = $state(session.key);
+	// The server is asking for a key when a read comes back 401.
+	const needsKey = $derived(workspaces.error?.status === 401);
 
 	const nav = [
 		{ href: '/', label: 'Overview', icon: 'M2.5 9.5 8 3l5.5 6.5M4 8.5v5h8v-5' },
@@ -109,6 +112,20 @@
 						<option value={w.slug}>{w.name && w.name !== w.slug ? `${w.name} (${w.slug})` : w.slug}</option>
 					{/each}
 				</select>
+			</label>
+			<label class="ctl">
+				<span>API key</span>
+				<input
+					class="input"
+					class:needed={needsKey}
+					type="password"
+					placeholder={needsKey ? 'this server needs a key' : 'if the server asks for one'}
+					bind:value={keyDraft}
+					onchange={() => setKey(keyDraft)}
+					onblur={() => setKey(keyDraft)}
+					autocomplete="off"
+					spellcheck="false"
+				/>
 			</label>
 			<label class="ctl">
 				<span>Acting as</span>

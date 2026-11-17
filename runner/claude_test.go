@@ -173,3 +173,41 @@ func TestAnAgentGivenFilesMayReadOnlyThose(t *testing.T) {
 		t.Error("a file name with a directory was accepted")
 	}
 }
+
+func TestAModelCanBeNamedAsACloudServesIt(t *testing.T) {
+	c := &Claude{Models: map[string]string{"small": "claude-haiku-5-5", "alias": "haiku"}, ModelPrefix: "eu.anthropic."}
+	for _, tc := range []struct{ tier, fallback, want string }{
+		{"small", "", "eu.anthropic.claude-haiku-5-5"},                           // a tier's model
+		{"", "claude-sonnet-5-5", "eu.anthropic.claude-sonnet-5-5"},              // a template's model
+		{"alias", "", "haiku"},                                                   // a short alias is left alone
+		{"", "eu.anthropic.claude-sonnet-5-5", "eu.anthropic.claude-sonnet-5-5"}, // already prefixed
+		{"", "", ""}, // none named: the command line's default
+	} {
+		if got := c.model(tc.tier, tc.fallback); got != tc.want {
+			t.Errorf("model(%q, %q) = %q, want %q", tc.tier, tc.fallback, got, tc.want)
+		}
+	}
+	if got := (&Claude{}).model("", "claude-sonnet-5-5"); got != "claude-sonnet-5-5" {
+		t.Errorf("with no prefix the model became %q", got)
+	}
+}
+
+func TestOnlyNamedVariablesReachAnAgent(t *testing.T) {
+	t.Setenv("CLAUDE_CODE_USE_BEDROCK", "1")
+	t.Setenv("WEIR_SECRET_THING", "do-not-leak")
+	var env []string
+	c := &Claude{Env: []string{"CLAUDE_CODE_USE_BEDROCK"}, run: func(_ context.Context, _ string, _, e []string, _, _ string) ([]byte, error) {
+		env = e
+		return []byte(`{"result":"ok","structured_output":{}}`), nil
+	}}
+	if _, err := c.Run(context.Background(), RunRequest{Prompt: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(env, "\n")
+	if !strings.Contains(joined, "CLAUDE_CODE_USE_BEDROCK=1") {
+		t.Errorf("the variable that was named did not reach the agent: %s", joined)
+	}
+	if strings.Contains(joined, "WEIR_SECRET_THING") {
+		t.Error("a variable that was not named reached the agent")
+	}
+}

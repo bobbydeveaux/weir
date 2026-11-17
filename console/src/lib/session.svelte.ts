@@ -34,7 +34,31 @@ function linked(): string | null {
 	}
 }
 
+// The API key is kept for this browser tab only, and is gone when the tab
+// closes: it is a credential, and should not outlive the visit.
+const SECRET_KEY = 'weir.key';
+
+function readSecret(): string {
+	try {
+		return sessionStorage.getItem(SECRET_KEY) ?? '';
+	} catch {
+		return '';
+	}
+}
+
+export function setKey(key: string) {
+	session.key = key.trim();
+	try {
+		if (session.key) sessionStorage.setItem(SECRET_KEY, session.key);
+		else sessionStorage.removeItem(SECRET_KEY);
+	} catch {
+		// Not kept; it lasts until the page is reloaded.
+	}
+}
+
 export const session = $state({
+	/** The API key, when the server asks for one. Empty on a server that does not. */
+	key: readSecret(),
 	workspace: linked() ?? read(WORKSPACE_KEY, 'default'),
 	actor: read(ACTOR_KEY, '')
 });

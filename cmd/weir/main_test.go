@@ -78,3 +78,13 @@ func TestHelpListsEveryCommand(t *testing.T) {
 		}
 	}
 }
+
+func TestListsAndPairsAreReadFromSettings(t *testing.T) {
+	if got := names(" A, ,B ,"); len(got) != 2 || got[0] != "A" || got[1] != "B" {
+		t.Errorf("names = %q", got)
+	}
+	got := pairs("small=claude-haiku-5-5, large = claude-opus-5-5, broken, =x, y=")
+	if len(got) != 2 || got["small"] != "claude-haiku-5-5" || got["large"] != "claude-opus-5-5" {
+		t.Errorf("pairs = %v", got)
+	}
+}

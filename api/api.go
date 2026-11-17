@@ -1,8 +1,8 @@
 // Package api is Weir's HTTP interface.
 //
-// The caller's identity comes from the X-Weir-Actor header and is not yet
-// authenticated. Run the API only where every caller is trusted until API
-// keys are added.
+// By default the API trusts its callers: the workspace and the actor are
+// whatever the request says. WithAdminKey turns authentication on, after
+// which every request must carry an API key (see auth.go).
 package api
 
 import (
@@ -24,11 +24,14 @@ const maxBody = 1 << 20
 
 // New returns the API's handler. reg holds the tools agents may call through
 // the tool endpoints; it may be nil, in which case no tools are offered.
-func New(eng *engine.Engine, reg *worker.Registry) http.Handler {
+func New(eng *engine.Engine, reg *worker.Registry, opts ...Option) http.Handler {
 	if reg == nil {
 		reg = worker.NewRegistry()
 	}
 	s := &server{eng: eng, reg: reg}
+	for _, opt := range opts {
+		opt(s)
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		reply(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -127,7 +130,53 @@ func New(eng *engine.Engine, reg *worker.Registry) http.Handler {
 			fail(w, err)
 			return
 		}
+		// A workspace's key is shown its own workspace and no other.
+		if p := principalOf(r); p != nil && p.workspace != "" {
+			mine := out[:0]
+			for _, ws := range out {
+				if ws.Slug == p.workspace {
+					mine = append(mine, ws)
+				}
+			}
+			out = mine
+		}
 		reply(w, http.StatusOK, out)
+	})
+	mux.HandleFunc("GET /v1/keys", func(w http.ResponseWriter, r *http.Request) {
+		keys, err := s.in(r).Keys(r.Context())
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		reply(w, http.StatusOK, keys)
+	})
+	mux.HandleFunc("POST /v1/keys", func(w http.ResponseWriter, r *http.Request) {
+		who, ok := needActor(w, r)
+		if !ok {
+			return
+		}
+		var in struct {
+			Name  string `json:"name"`
+			Role  string `json:"role"`
+			ActAs bool   `json:"act_as"`
+		}
+		if !decode(w, r, &in) {
+			return
+		}
+		secret, key, err := s.in(r).CreateKey(r.Context(), in.Name, in.Role, in.ActAs, who)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		// The only time the secret is ever shown.
+		reply(w, http.StatusCreated, map[string]any{"key": key, "secret": secret})
+	})
+	mux.HandleFunc("DELETE /v1/keys/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if err := s.in(r).RevokeKey(r.Context(), r.PathValue("id")); err != nil {
+			fail(w, err)
+			return
+		}
+		reply(w, http.StatusOK, map[string]string{"status": "revoked"})
 	})
 	mux.HandleFunc("POST /v1/workspaces", func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := needActor(w, r); !ok {
@@ -165,6 +214,12 @@ func (s *server) scoped(next http.Handler) http.Handler {
 			// name its workspace in the address.
 			slug = r.URL.Query().Get("workspace")
 		}
+		if s.adminKey != "" && !open(r.URL.Path) {
+			var ok bool
+			if r, slug, ok = s.authenticate(w, r, slug); !ok {
+				return
+			}
+		}
 		if slug == "" {
 			slug = "default"
 		}
@@ -201,9 +256,22 @@ func (s *server) raw(get func(*http.Request) (json.RawMessage, error)) http.Hand
 type server struct {
 	eng *engine.Engine
 	reg *worker.Registry
+	// adminKey, when set, turns authentication on.
+	adminKey string
 }
 
-func actor(r *http.Request) string { return r.Header.Get("X-Weir-Actor") }
+// actor says who a request is made by. With authentication on, that is the
+// key's own name, unless the key may speak for someone else and names them.
+func actor(r *http.Request) string {
+	named := r.Header.Get("X-Weir-Actor")
+	if p := principalOf(r); p != nil {
+		if p.actAs && named != "" {
+			return named
+		}
+		return p.name
+	}
+	return named
+}
 
 func reply(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json")

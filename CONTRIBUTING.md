@@ -2,6 +2,12 @@
 
 Weir is at an early stage, and the workflow contract is still changing. The best time to shape it is now.
 
+## People and agents
+
+A lot of Weir is written with coding agents. The rules for them, and for you, are in [CLAUDE.md](CLAUDE.md): what "done" means, what must never be weakened, and how to avoid two sessions doing the same work. The to-do list is [docs/build/02-epics.md](docs/build/02-epics.md).
+
+If you use Claude Code here, three skills come with the repository: `weir-status` (where things stand), `weir-pick-work` (take an item) and `weir-finish` (tests, the to-do list, the docs, a pull request).
+
 ## Before you start
 
 Open an issue describing what you want to change before writing much code. The contract is deliberately small, and a short conversation first saves a rejected pull request.

@@ -31,6 +31,10 @@ type Claude struct {
 	Command string
 	// Models maps a tier name to a model. Unlisted tiers use the command line's default.
 	Models map[string]string
+	// ModelPrefix is put in front of a model name that begins "claude-", for
+	// a cloud that serves Claude under its own names (Bedrock's inference
+	// profiles, for example "eu.anthropic.").
+	ModelPrefix string
 	// DecideModel is the model for decide steps when the tier names none. Empty means "haiku".
 	DecideModel string
 	// Env lists extra environment variables to pass through, by name.
@@ -115,10 +119,17 @@ func (c *Claude) Decide(ctx context.Context, req DecideRequest) (DecideResult, e
 }
 
 func (c *Claude) model(tier, fallback string) string {
-	if m := c.Models[tier]; m != "" {
-		return m
+	m := fallback
+	if named := c.Models[tier]; named != "" {
+		m = named
 	}
-	return fallback
+	// A cloud that serves Claude under its own names wants a prefix: on
+	// Bedrock, "claude-sonnet-5" is asked for as "eu.anthropic.claude-sonnet-5".
+	// A name that already carries one, or a short alias, is left alone.
+	if c.ModelPrefix != "" && strings.HasPrefix(m, "claude-") {
+		m = c.ModelPrefix + m
+	}
+	return m
 }
 
 // claudeArgs builds the command line for one call. The prompt goes in on
