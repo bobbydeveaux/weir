@@ -1,4 +1,4 @@
-<!-- Title: "#17: Add credentials on a connection". Branch: feature/issue-17-credentials. Every commit starts "#17: ". -->
+<!-- Title: "#0: Add credentials on a connection". Branch: feature/issue-0-credentials. Every commit starts "#0: ". -->
 
 ## What changed, and why
 

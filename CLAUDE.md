@@ -61,12 +61,14 @@ Every change closes one issue, and says so in four places. CI checks them (the `
 
 | Where | Form |
 |---|---|
-| Branch | `feature/issue-17-credentials` (or `fix/`, `docs/`, `chore/`) |
-| Every commit subject | `#17: Add credentials on a connection` |
-| Pull request title | `#17: Add credentials on a connection` |
-| Pull request description | `Closes #17` |
+| Branch | `feature/issue-0-credentials` (or `fix/`, `docs/`, `chore/`) |
+| Every commit subject | `#0: Add credentials on a connection` |
+| Pull request title | `#0: Add credentials on a connection` |
+| Pull request description | `Closes #0` |
 
 Write commit messages with `-m` or `-F`, not in an editor: git deletes a line that starts with `#` when a message is edited by hand.
+
+The examples use issue number 0, which cannot exist. GitHub closes an issue whenever a merged pull request or commit says `closes`, `fixes` or `resolves` beside its number, even in an example or a quotation. Write one of those words beside a real number only when you mean it.
 
 ## Working alongside other agents
 
