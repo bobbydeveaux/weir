@@ -419,6 +419,8 @@ type Result struct {
 	Actor string
 	// Calls are the model calls made. Their cost is added to the step and the run.
 	Calls []AICall
+	// Files are the files the step produced, already kept with KeepFiles.
+	Files []FileRecord
 }
 
 // Complete finishes the live attempt that token belongs to. A token that is
@@ -490,7 +492,13 @@ func (e *Engine) completeTx(ctx context.Context, tx pgx.Tx, att *attemptRow, res
 		run.id, cost).Scan(&run.spent); err != nil {
 		return err
 	}
+	if err := e.recordFiles(ctx, tx, run.id, step.id, res.Files); err != nil {
+		return err
+	}
 	data := map[string]any{"attempt": att.number}
+	if len(res.Files) > 0 {
+		data["files"] = len(res.Files)
+	}
 	if res.Label != "" {
 		data["label"] = res.Label
 	}

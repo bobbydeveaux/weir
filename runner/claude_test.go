@@ -211,3 +211,102 @@ func TestOnlyNamedVariablesReachAnAgent(t *testing.T) {
 		t.Error("a variable that was not named reached the agent")
 	}
 }
+
+func TestAnAgentThatMayWriteIsConfinedToOneDirectory(t *testing.T) {
+	var args []string
+	var dir, system string
+	wrote := func(d string) {
+		_ = os.MkdirAll(filepath.Join(d, "out", "src"), 0o700)
+		_ = os.WriteFile(filepath.Join(d, "out", "README.md"), []byte("hello"), 0o600)
+		_ = os.WriteFile(filepath.Join(d, "out", "src", "main.go"), []byte("package main"), 0o600)
+		// Written outside the directory it was given: never kept.
+		_ = os.WriteFile(filepath.Join(d, "stray.txt"), []byte("no"), 0o600)
+	}
+	c := &Claude{run: func(_ context.Context, _ string, a, _ []string, _, d string) ([]byte, error) {
+		args, dir = a, d
+		for i, v := range a {
+			if v == "--system-prompt" {
+				system = a[i+1]
+			}
+		}
+		wrote(d)
+		return []byte(`{"result":"ok","structured_output":{"ok":true},"total_cost_usd":0.01}`), nil
+	}}
+	req := RunRequest{System: "Be brief.", Prompt: "write it", Schema: json.RawMessage(`{"type":"object"}`),
+		Files: []File{{Name: "spec/brief.md", Data: []byte("brief")}}, Writes: &WriteLimit{MaxFiles: 5, MaxBytes: 1 << 20}}
+	res, err := c.Run(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	got := map[string]string{}
+	for _, f := range res.Files {
+		got[f.Name] = string(f.Data)
+	}
+	if len(got) != 2 || got["README.md"] != "hello" || got["src/main.go"] != "package main" {
+		t.Errorf("files = %v, want only the two written inside out", got)
+	}
+	joined := strings.Join(args, " ")
+	out := filepath.Join(dir, "out")
+	for _, want := range []string{"--tools Read,Write,Edit ", "Read(/" + dir + "/**)", "Edit(/" + out + "/**)"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("args lack %q: %s", want, joined)
+		}
+	}
+	if strings.Contains(joined, "Edit(/"+dir+"/**)") || strings.Contains(joined, "Write(") {
+		t.Errorf("the agent may write to its whole working directory: %s", joined)
+	}
+	if !strings.Contains(system, "Be brief.") || !strings.Contains(system, out) {
+		t.Errorf("the agent was not told where to write: %q", system)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Errorf("the working directory %q was left behind", dir)
+	}
+
+	// Too many files, too many bytes, and anything that is not a file.
+	req.Writes = &WriteLimit{MaxFiles: 1, MaxBytes: 1 << 20}
+	if _, err := c.Run(context.Background(), req); err == nil || !strings.Contains(err.Error(), "more than 1 files") {
+		t.Errorf("two files with a limit of one = %v", err)
+	}
+	req.Writes = &WriteLimit{MaxFiles: 5, MaxBytes: 10}
+	if _, err := c.Run(context.Background(), req); err == nil || !strings.Contains(err.Error(), "MB of files") {
+		t.Errorf("17 bytes with a limit of 10 = %v", err)
+	}
+	req.Writes = &WriteLimit{MaxFiles: 5, MaxBytes: 1 << 20}
+	wrote = func(d string) { _ = os.Symlink("/etc/hosts", filepath.Join(d, "out", "hosts")) }
+	if _, err := c.Run(context.Background(), req); err == nil || !strings.Contains(err.Error(), "not an ordinary file") {
+		t.Errorf("a link out of the directory = %v, want it refused", err)
+	}
+	// A file given to the agent cannot land in the directory it writes to.
+	req.Files = []File{{Name: "out/planted.txt"}}
+	if _, err := c.Run(context.Background(), req); err == nil {
+		t.Error("a file given under out/ was accepted")
+	}
+}
+
+// TestAnAgentWritesFilesLive has a real agent write a file. It runs only when
+// asked, because it needs a signed-in command line and spends a little.
+func TestAnAgentWritesFilesLive(t *testing.T) {
+	if os.Getenv("WEIR_TEST_CLAUDE") == "" {
+		t.Skip("set WEIR_TEST_CLAUDE=1 to make a real call to the Claude command line")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	c := &Claude{Models: map[string]string{"": "haiku"}}
+	res, err := c.Run(ctx, RunRequest{
+		System: "You write small files when asked.",
+		Prompt: "Read brief.txt. Write a file called notes/answer.txt holding exactly the word in the brief, in capitals.",
+		Schema: json.RawMessage(`{"type":"object","required":["wrote"],"properties":{"wrote":{"type":"string"}}}`),
+		Files:  []File{{Name: "brief.txt", Data: []byte("heron")}},
+		Writes: &WriteLimit{MaxFiles: 5, MaxBytes: 1 << 20},
+	})
+	t.Logf("output=%s cost=$%.4f files=%d transcript=%s", res.Output, res.Usage.CostUSD, len(res.Files), res.Transcript)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	for _, f := range res.Files {
+		t.Logf("  %s: %q", f.Name, f.Data)
+	}
+	if len(res.Files) != 1 || res.Files[0].Name != "notes/answer.txt" || strings.TrimSpace(string(res.Files[0].Data)) != "HERON" {
+		t.Errorf("files = %+v, want notes/answer.txt holding HERON", res.Files)
+	}
+}

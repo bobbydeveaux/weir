@@ -72,11 +72,20 @@ type RunRequest struct {
 	ToolToken string
 	// Files are documents the agent may read. They are the only files it can see.
 	Files []File
+	// Writes, when set, lets the agent produce files, up to these limits.
+	Writes *WriteLimit
+}
+
+// WriteLimit bounds what an agent may write.
+type WriteLimit struct {
+	MaxFiles int
+	MaxBytes int64
 }
 
 // File is a document given to an agent.
 type File struct {
-	// Name is the file's name, with no directory.
+	// Name is the file's path, with forward slashes and no leading slash.
+	// A file fetched for an agent has a plain name with no directory.
 	Name string
 	Data []byte
 }
@@ -91,7 +100,9 @@ type Tool struct {
 
 // RunResult is what an agent produced.
 type RunResult struct {
-	Output     json.RawMessage
+	Output json.RawMessage
+	// Files are the files the agent wrote, when it was allowed to.
+	Files      []File
 	Transcript string
 	Usage      Usage
 }

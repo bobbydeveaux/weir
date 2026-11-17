@@ -300,6 +300,9 @@ func (e *Engine) Publish(ctx context.Context, source []byte, by string) (*Publis
 	}
 	for _, s := range def.Steps {
 		for _, f := range s.Files {
+			if f.Step != "" {
+				continue // files an earlier step produced, not fetched from anywhere
+			}
 			if _, err := e.endpoint(ctx, e.pool, e.workspace, f.Connection); err != nil {
 				return nil, fmt.Errorf("step %s: files: %w", s.ID, err)
 			}
@@ -640,9 +643,22 @@ func (e *Engine) scope(ctx context.Context, tx pgx.Tx, run *runRow) (spec.Scope,
 				return sc, err
 			}
 		}
-		sc.Steps[key] = map[string]any{"output": output, "label": label, "outcome": outcome}
+		sc.Steps[key] = map[string]any{"output": output, "label": label, "outcome": outcome, "files": []any{}}
 	}
-	return sc, rows.Err()
+	if err := rows.Err(); err != nil {
+		return sc, err
+	}
+	rows.Close()
+	files, err := e.filesByStep(ctx, tx, run.id)
+	if err != nil {
+		return sc, err
+	}
+	for key, list := range files {
+		if step, ok := sc.Steps[key].(map[string]any); ok {
+			step["files"] = list
+		}
+	}
+	return sc, nil
 }
 
 // newToken returns a fresh token and the hash that is stored for it.

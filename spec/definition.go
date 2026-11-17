@@ -100,8 +100,11 @@ type Step struct {
 	Tier   string `yaml:"tier,omitempty" json:"tier,omitempty"`
 	Tools  *Tools `yaml:"tools,omitempty" json:"tools,omitempty"`
 	// Files are documents fetched for the agent to read.
-	Files  []FileRef `yaml:"files,omitempty" json:"files,omitempty"`
-	Budget *Budget   `yaml:"budget,omitempty" json:"budget,omitempty"`
+	Files []FileRef `yaml:"files,omitempty" json:"files,omitempty"`
+	// Writes lets the agent produce files, which Weir keeps for later steps
+	// and for the application.
+	Writes *Writes `yaml:"writes,omitempty" json:"writes,omitempty"`
+	Budget *Budget `yaml:"budget,omitempty" json:"budget,omitempty"`
 
 	// deterministic
 	Handler string `yaml:"handler,omitempty" json:"handler,omitempty"`
@@ -260,6 +263,21 @@ func (d *Definition) Validate(opts ValidateOptions) error {
 		}
 		ids[s.ID] = true
 	}
+	writers := map[string]bool{}
+	for _, s := range d.Steps {
+		writers[s.ID] = s.Writes != nil
+	}
+	for _, s := range d.Steps {
+		for i, f := range s.Files {
+			switch {
+			case f.Step == "":
+			case f.Step == s.ID:
+				add("steps: %s: files[%d] names the step itself", s.ID, i)
+			case !writers[f.Step]:
+				add("steps: %s: files[%d] names step %q, which is not a step that writes files", s.ID, i, f.Step)
+			}
+		}
+	}
 
 	for i := range d.Steps {
 		s := &d.Steps[i]
@@ -370,11 +388,26 @@ func validateAI(s *Step, at string, add func(string, ...any)) {
 		add("%s: an ai step must declare a budget in usd", at)
 	}
 	for i, f := range s.Files {
+		if f.Step != "" {
+			// Files an earlier step produced. Nothing else may be set.
+			if f.Connection != "" || f.Path != "" || f.Name != "" {
+				add("%s: files[%d] names a step, so it must not also set connection, path or name", at, i)
+			}
+			continue
+		}
 		if f.Connection == "" || !strings.HasPrefix(f.Path, "/") || f.Name == "" || strings.ContainsAny(f.Name, `/\`) {
-			add("%s: files[%d] needs a connection, a path starting with a slash, and a plain name", at, i)
+			add("%s: files[%d] needs either a step, or a connection, a path starting with a slash, and a plain name", at, i)
 		}
 	}
-	forbid(s, at, add, "ai", fieldsExcept("prompt", "tier", "tools", "budget", "files"))
+	if w := s.Writes; w != nil {
+		if w.MaxFiles < 0 || w.MaxFiles > MaxWriteFiles {
+			add("%s: writes.max_files must be between 1 and %d", at, MaxWriteFiles)
+		}
+		if w.MaxMegabytes < 0 || w.MaxMegabytes > MaxWriteMegabytes {
+			add("%s: writes.max_megabytes must be between 1 and %d", at, MaxWriteMegabytes)
+		}
+	}
+	forbid(s, at, add, "ai", fieldsExcept("prompt", "tier", "tools", "budget", "files", "writes"))
 }
 
 func validateDeterministic(s *Step, at string, opts ValidateOptions, add func(string, ...any)) {
@@ -496,15 +529,48 @@ type Trigger struct {
 
 var eventPattern = regexp.MustCompile(`^[a-z][a-z0-9]*([._-][a-z0-9]+)*$`)
 
-// FileRef says where to fetch a document for an agent. Path and Name may hold
-// {{name}} placeholders, filled from the step's input.
+// Writes says how much an agent may write. A zero limit means the default.
+type Writes struct {
+	// MaxFiles is the most files the agent may produce.
+	MaxFiles int `yaml:"max_files,omitempty" json:"max_files,omitempty"`
+	// MaxMegabytes is the most those files may add up to.
+	MaxMegabytes int `yaml:"max_megabytes,omitempty" json:"max_megabytes,omitempty"`
+}
+
+// The limits on what an agent may write: the defaults, and the most a
+// definition may ask for.
+const (
+	DefaultWriteFiles     = 20
+	DefaultWriteMegabytes = 8
+	MaxWriteFiles         = 200
+	MaxWriteMegabytes     = 64
+)
+
+// Limits returns the limits in force: the number of files and their total size in bytes.
+func (w *Writes) Limits() (files int, bytes int64) {
+	files, mb := DefaultWriteFiles, DefaultWriteMegabytes
+	if w != nil && w.MaxFiles > 0 {
+		files = w.MaxFiles
+	}
+	if w != nil && w.MaxMegabytes > 0 {
+		mb = w.MaxMegabytes
+	}
+	return files, int64(mb) << 20
+}
+
+// FileRef says which files to give an agent. It names either an earlier step,
+// for the files that step produced, or a connection to fetch one document
+// from. Path and Name may hold {{name}} placeholders, filled from the step's input.
 type FileRef struct {
+	// Step is another step of this workflow. The agent is given every file
+	// that step produced, under the paths it was written at.
+	Step string `yaml:"step,omitempty" json:"step,omitempty"`
 	// Connection is the named third party to fetch from.
-	Connection string `yaml:"connection" json:"connection"`
+	Connection string `yaml:"connection,omitempty" json:"connection,omitempty"`
 	// Path is the path on that connection, starting with a slash.
-	Path string `yaml:"path" json:"path"`
+	Path string `yaml:"path,omitempty" json:"path,omitempty"`
 	// Name is what the agent sees the file called.
-	Name string `yaml:"name" json:"name"`
+	Name string `yaml:"name,omitempty" json:"name,omitempty"`
 }
 
 // DecideProviders are the names a decide step may give as its provider.
@@ -523,6 +589,7 @@ func kindFields(s *Step) map[string]bool {
 		"tier":       s.Tier != "",
 		"tools":      s.Tools != nil,
 		"files":      len(s.Files) > 0,
+		"writes":     s.Writes != nil,
 		"budget":     s.Budget != nil,
 		"handler":    s.Handler != "",
 		"assign":     s.Assign != nil,

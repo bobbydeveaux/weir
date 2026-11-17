@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -61,10 +63,11 @@ func (c *Claude) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	}
 	defer cleanup()
 	// Files go into a directory of their own, and the agent is allowed to
-	// read that directory and nothing else.
-	dir, builtin := "", ""
-	if len(req.Files) > 0 {
-		if dir, err = fileDir(req.Files); err != nil {
+	// read that directory and nothing else. An agent that may write is given
+	// one directory inside it to write to, and can write nowhere else.
+	dir, builtin, system := "", "", req.System
+	if len(req.Files) > 0 || req.Writes != nil {
+		if dir, err = fileDir(req.Files, req.Writes != nil); err != nil {
 			return RunResult{}, err
 		}
 		defer os.RemoveAll(dir)
@@ -73,11 +76,25 @@ func (c *Claude) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 			extra = append(extra, "--allowedTools")
 		}
 		extra = append(extra, "Read(/"+dir+"/**)")
+		if req.Writes != nil {
+			builtin = "Read,Write,Edit"
+			out := filepath.Join(dir, outDir)
+			// An Edit rule covers every tool that changes a file; the
+			// command line ignores a rule written for Write.
+			extra = append(extra, "Edit(/"+out+"/**)")
+			system = strings.TrimSpace(system + fmt.Sprintf("\n\nYou can write files. Write every file you produce inside the directory %s (%s). Only files there are kept; you cannot write anywhere else. At most %d files, %d MB in total.",
+				outDir, out, req.Writes.MaxFiles, req.Writes.MaxBytes>>20))
+		}
 	}
-	out, err := c.call(ctx, req.System, req.Prompt, c.model(req.Tier, req.Model), req.Schema, req.BudgetUSD, builtin, dir, extra...)
+	out, err := c.call(ctx, system, req.Prompt, c.model(req.Tier, req.Model), req.Schema, req.BudgetUSD, builtin, dir, extra...)
 	res := RunResult{Usage: out.usage, Transcript: out.text}
 	if err != nil {
 		return res, err
+	}
+	if req.Writes != nil {
+		if res.Files, err = collect(filepath.Join(dir, outDir), *req.Writes); err != nil {
+			return res, err
+		}
 	}
 	if len(out.structured) == 0 {
 		return res, errors.New("the command line returned no structured output")
@@ -270,28 +287,102 @@ func parseClaude(raw []byte) (claudeOutput, error) {
 	return out, nil
 }
 
-// fileDir writes files into a new directory and returns its real path.
-func fileDir(files []File) (string, error) {
-	dir, err := os.MkdirTemp("", "weir-files-")
-	if err != nil {
+// outDir is the directory, inside an agent's working directory, that it may
+// write to.
+const outDir = "out"
+
+// CleanPath checks a file's path and returns it in its plain form: forward
+// slashes, no leading slash, and no step that leaves the directory.
+func CleanPath(name string) (string, error) {
+	clean := path.Clean(strings.ReplaceAll(name, `\`, "/"))
+	if name == "" || clean == "." || strings.HasPrefix(clean, "/") || clean == ".." || strings.HasPrefix(clean, "../") ||
+		strings.ContainsRune(name, 0) || len(clean) > 512 {
+		return "", fmt.Errorf("file path %q must be a relative path that stays inside its directory", name)
+	}
+	return clean, nil
+}
+
+// fileDir writes files into a new directory and returns its real path. With
+// writable set it also makes the directory the agent may write to.
+func fileDir(files []File, writable bool) (dir string, err error) {
+	if dir, err = os.MkdirTemp("", "weir-files-"); err != nil {
 		return "", err
 	}
+	defer func() {
+		if err != nil {
+			os.RemoveAll(dir)
+		}
+	}()
 	// The permission rule is matched against the real path, so resolve links.
 	if real, err := filepath.EvalSymlinks(dir); err == nil {
 		dir = real
 	}
 	for _, f := range files {
-		name := filepath.Base(f.Name)
-		if name == "." || name == string(filepath.Separator) || name != f.Name {
-			os.RemoveAll(dir)
-			return "", fmt.Errorf("file name %q must be a plain name with no directory", f.Name)
+		name, err := CleanPath(f.Name)
+		if err != nil {
+			return "", err
 		}
-		if err := os.WriteFile(filepath.Join(dir, name), f.Data, 0o600); err != nil {
-			os.RemoveAll(dir)
+		if writable && (name == outDir || strings.HasPrefix(name, outDir+"/")) {
+			return "", fmt.Errorf("file %q cannot be given to this step: %s is the directory its agent writes to", f.Name, outDir)
+		}
+		target := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(target, f.Data, 0o600); err != nil {
+			return "", err
+		}
+	}
+	if writable {
+		if err := os.Mkdir(filepath.Join(dir, outDir), 0o700); err != nil {
 			return "", err
 		}
 	}
 	return dir, nil
+}
+
+// collect reads the files an agent wrote. Anything that is not an ordinary
+// file, such as a link, is refused, so that nothing outside the directory can
+// be picked up.
+func collect(dir string, limit WriteLimit) ([]File, error) {
+	var files []File
+	var total int64
+	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(dir, p)
+		if err != nil {
+			return err
+		}
+		name, err := CleanPath(filepath.ToSlash(rel))
+		if err != nil {
+			return err
+		}
+		if !d.Type().IsRegular() {
+			return fmt.Errorf("the agent wrote %s, which is not an ordinary file", name)
+		}
+		if limit.MaxFiles > 0 && len(files) >= limit.MaxFiles {
+			return fmt.Errorf("the agent wrote more than %d files", limit.MaxFiles)
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if total += info.Size(); limit.MaxBytes > 0 && total > limit.MaxBytes {
+			return fmt.Errorf("the agent wrote more than %d MB of files", limit.MaxBytes>>20)
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		files = append(files, File{Name: name, Data: data})
+		return nil
+	})
+	return files, err
 }
 
 // runCommand runs the command line in dir, or in a new empty directory when

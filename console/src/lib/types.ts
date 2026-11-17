@@ -292,6 +292,16 @@ export interface StepTime {
 	spent_usd: number | null;
 }
 
+/** One entry of GET /v1/runs/{id}/files: a file a step produced. */
+export interface RunFile {
+	step: string;
+	path: string;
+	size: number;
+	sha256: string;
+	content_type: string;
+	created_at: string;
+}
+
 /** GET /v1/runs/{id}/record. */
 export interface RunRecord {
 	namespace: string;
