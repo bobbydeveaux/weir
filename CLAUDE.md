@@ -58,6 +58,7 @@ These are the reasons Weir exists. A change that relaxes one needs a maintainer'
 ## Working alongside other agents
 
 - Do one item from the to-do list at a time, on a branch, and open a pull request. Do not commit to `main`.
-- Say which item you are taking: open or comment on a GitHub issue for it before you start, so that two sessions do not do the same work.
+- Say which item you are taking before you start, so that two sessions do not do the same work. Every open item in the to-do list ends with its GitHub issue number: comment there. Labels (`epic:NN-…`) group issues by epic.
+- If you add an item to the list, open an issue for it and put the number on the line.
 - If you find the to-do list is wrong (something marked done is not, or the reverse), fix the list in your change and say so.
 - If you cannot finish, leave the list accurate: note what is half-done and where you stopped.

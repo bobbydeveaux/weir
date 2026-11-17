@@ -12,22 +12,25 @@ A real workflow has run end to end from the command line with the Claude command
 
 | Epic | State | What is left |
 | --- | --- | --- |
-| 0 Foundations | Done | CI has never run, because the repository is not on GitHub |
+| 0 Foundations | Done |  |
 | 1 Contract | Mostly done | A JSON Schema for definitions; type-checking expressions; the event and error catalogues |
 | 2 Storage | Done | The blob store |
 | 3 Definitions | Mostly done | Alias history; `weir versions` and `weir alias` |
-| 4 Run engine | Done | |
+| 4 Run engine | Done | Undoing completed steps on cancel |
 | 5 Workers and tokens | Mostly done | Waking a worker on a Postgres notification (streams already use them; workers still poll) |
 | 6 Deterministic steps | Mostly done | Typed handlers; HTTP and wait built-ins |
 | 7 Human steps | Mostly done | Checking that the person deciding holds the role; reopening a decision |
-| 8 External steps | Mostly done | Authentication on connections; allowed sites |
+| 8 External steps | Mostly done | Credentials on connections, which blocks Pipes and anything off the local network; allowed addresses |
 | 9 Gateway and decide | Mostly done | A live call to Jev and to Gemini Decisions (no keys yet); the Gemini command line; Codex steps with tools; a fallback provider; shadow mode; workload identity and a direct-call runner |
 | 10 AI steps | Mostly done | The `approve` class of tool; marking tool output as data; the full transcript (the prompt and the final reply are kept, the turns in between are not) |
 | 11 Triggers | Mostly done | A `decide` filter in a trigger; counters; a schedule trigger |
 | 12 Hooks | Mostly done | A signature on each request; hooks on a single step |
 | 13 API and command line | Mostly done | Sign-in for people (the console takes a key today); a published API description; logs and metrics; the newer endpoints on the command line |
 | 14 Examples and conformance | Started | Two more examples; tests for all three; the conformance suite. A real application (agent-demo) runs on Weir, which the plan did not ask for |
-| 15 Release | Not started | |
+| 15 Release | Started | The repository is public. No tagged version yet |
+| 16 Pipes | Not started | Needs credentials on connections first |
+| 17 Running in the cloud | Not started | Weir does not idle at zero yet |
+| 18 Learning and authoring | Not started |  |
 
 ## What "working" means
 
@@ -42,7 +45,7 @@ A real workflow has run end to end from the command line with the Claude command
 - [x] A run stops when its budget is spent.
 - [x] The person who started a run cannot approve it when the workflow says so.
 - [ ] Every run produces an event log that matches the expected log in the conformance suite.
-- [ ] Tests gate every merge in CI.
+- [x] Tests gate every merge in CI.
 
 ## What is deliberately not in v0.1.0
 
@@ -97,6 +100,7 @@ Epics 6, 7, 8 and 9 do not depend on each other and can be built in any order on
 
 ## Epics
 
+
 ### 0. Foundations
 
 A repository that builds, tests and runs with one command.
@@ -104,18 +108,18 @@ A repository that builds, tests and runs with one command.
 - [x] Go module, directory layout matching the spec (`spec/`, `engine/`, `adapters/`, `handlers/`, `examples/`, `conformance/`)
 - [x] `docker compose` with Postgres, and a `make` target for each common job
 - [x] Migrations tool wired in, with an empty first migration
-- [ ] CI that runs format, vet, lint and tests, and blocks merges on failure (the workflow is written; it has not run, and merge blocking needs the repository to be on GitHub)
+- [x] CI that runs format, vet and tests for the engine and a type check and build for the console, and blocks merges on failure (`main` is protected: pull requests only, both jobs must pass)
 - [x] Licence, contributing guide, security policy
 
 ### 1. The contract
 
 The definition format, checked before anything is stored.
 
-- [ ] A JSON Schema for workflow definitions, covering all five step kinds and the shared envelope
+- [ ] A JSON Schema for workflow definitions, covering all five step kinds and the shared envelope (#1)
 - [x] A YAML parser that produces the normalised form the engine reads
 - [x] Publish-time checks: every reference resolves, every AI step has a prompt, schema and budget, every decide has labels and a default
-- [ ] The expression language, type-checked against step output schemas (CEL is in and checked for syntax at publish; not yet type-checked against schemas)
-- [ ] The event catalogue and the error catalogue, as data
+- [ ] The expression language, type-checked against step output schemas (CEL is in and checked for syntax at publish; not yet type-checked against schemas) (#2)
+- [ ] The event catalogue and the error catalogue, as data (#3)
 
 ### 2. Storage
 
@@ -124,16 +128,17 @@ The schema in [the database design](01-database-design.md).
 - [x] Migrations for every table in the first version
 - [x] Triggers for immutable versions and the append-only event log
 - [x] A store package with one function per transition, each a single transaction
-- [ ] A blob store interface with a Postgres implementation
+- [ ] A blob store interface with a Postgres implementation (#4)
 - [x] Tests that run against a real Postgres, not a fake
 
 ### 3. Definitions, versions and aliases
 
 - [x] Publish a definition as a new immutable version
-- [ ] Pin every reference at publish time and store the pins
-- [ ] Aliases that point at a version, with history (a `live` alias moves on publish; no history or other aliases yet)
+- [ ] Pin every reference at publish time and store the pins (#5)
+- [ ] Aliases that point at a version, with history (a `live` alias moves on publish; no history or other aliases yet) (#6)
 - [x] Templates and their immutable versions, for prompts and decide templates
-- [ ] `weir publish`, `weir versions`, `weir alias` (`publish` only)
+- [ ] `weir publish`, `weir versions`, `weir alias` (`publish` only) (#7)
+- [ ] An owner on each workflow (an application, git, or the console), then publishing and editing in the console for those it owns (#8)
 
 ### 4. The run engine
 
@@ -146,6 +151,8 @@ The state machine, with no workers yet.
 - [x] Compensation in reverse order on `cancel`
 - [x] Resume a blocked run from the failed step, keeping completed results
 - [x] Budget accounting at run and step level
+- [x] Cancelling a run, and blocked runs counted apart from active ones
+- [ ] Undo completed steps when a run is cancelled (today a cancelled run leaves them as they are) (#9)
 
 ### 5. Workers and tokens
 
@@ -157,15 +164,15 @@ How work is claimed, held and returned.
 - [x] Heartbeats that extend a lease
 - [x] Retries with backoff, and per-attempt and overall timeouts
 - [x] A sweep for expired leases, due timers and undelivered outbox rows (hooks in the outbox are delivered by the worker)
-- [ ] A local wake-up path: Postgres notifications, with polling as the fallback (notifications drive the streams; workers and hook delivery still poll, every half second)
+- [ ] A local wake-up path: Postgres notifications, with polling as the fallback (notifications drive the streams; workers and hook delivery still poll, every half second) (#10)
 
 ### 6. Deterministic steps
 
-- [ ] A handler registry, with declared input and output types (the registry is done; handlers do not declare types yet)
-- [ ] Input and output checked against those types
+- [ ] A handler registry, with declared input and output types (the registry is done; handlers do not declare types yet) (#11)
+- [ ] Input and output checked against those types (#12)
 - [x] An idempotency key passed to every handler call
-- [ ] A small Go library for writing handlers
-- [ ] Built-in handlers: HTTP request, wait, and a no-op for tests (no-op and echo only)
+- [ ] A small Go library for writing handlers (#13)
+- [ ] Built-in handlers: HTTP request, wait, and a no-op for tests (no-op and echo only) (#14)
 
 ### 7. Human steps
 
@@ -174,98 +181,133 @@ How work is claimed, held and returned.
 - [x] Outcomes that `next` rules can branch on
 - [x] Timeouts and an escalation chain
 - [x] Approve and reject through the API and `weir approve`
+- [ ] Reopening a decision, so that the right person can redo an approval made by the wrong one (#15)
+- [ ] Check that the person deciding holds the role the step names (today the role is recorded and not checked) (#16)
 
 ### 8. External steps
+- [x] Connections: a named address, HTTP or MCP, per workspace
 
-- [ ] Connections: address, authentication method, allowed sites, a reference to the secret (address and kind, HTTP or MCP; no authentication or allowed sites yet)
 - [x] Make the call, then park the step under its token
 - [x] A callback endpoint that accepts the token and validates the payload against the output schema
 - [x] Poll mode: repeat until a declared condition holds
 - [x] A fake third party for tests
+- [ ] Credentials on a connection, held by reference and never stored: `env:NAME` and `file:/path`, sent as a bearer token, a header or basic auth. This is what every platform (Cloud Run, AWS, Azure, Kubernetes) can supply, and it unblocks Pipes (#17)
+- [ ] An ID token from the machine's own identity as a connection credential, for one cloud service calling another with no secret at all (#18)
+- [ ] Allowed addresses for connections, so that a workspace cannot point Weir at anything it can reach (#19)
 
 ### 9. The AI gateway and decide steps
 
 - [x] A runner interface, chosen by a configuration setting: `cli`, `api` or `fake`
-- [ ] A provider adapter interface: how to pass the prompt, name the model, ask for structured output, restrict tools, and read cost and usage
+- [x] A provider adapter interface: how to pass the prompt, name the model, ask for structured output, restrict tools, and read cost and usage (the `Runner` interface, with Claude, Codex and the decision models behind it)
 - [x] The `cli` runner with the Claude adapter: a long-lived OAuth token, permission checks on, a clean environment and a time limit (checked with real calls)
-- [ ] Capabilities declared per provider, with a definition refused at publish if a step needs a guarantee its provider cannot give
+- [ ] Capabilities declared per provider, with a definition refused at publish if a step needs a guarantee its provider cannot give (#20)
 - [x] Codex adapter: locked-down `codex exec`, tokens read from the event stream, cost estimated from prices. Steps with tools are refused. Proven with a live call on 2026-11-16 (Codex 0.169.0, `gpt-6.1-sol`): a two-label decision took 12,518 tokens in and 21 out, because Codex adds its own instructions to every call, so small decisions are better left on Claude's small model
 - [x] Routing by tier: a step with `tier: codex` goes to Codex, everything else to Claude
 - [x] Decision models for `decide`: Jev and Gemini Decisions over HTTP, chosen per step with `provider:`; Jev is the default when it has a key. Tested against stand-in servers, not yet against the real services
-- [ ] Gemini adapter (the command line, for `ai` steps)
-- [x] Multi-tenant API: `X-Weir-Workspace` on every request, workspaces listed and created over the API, a test that one workspace cannot see or change another's
-- [x] Read API: workflows, versions, runs, the audit record, templates, connections, usage, the registry
-- [x] Documents for agents (`files` on an `ai` step), MCP servers as a source of tools, data on a decision, prompt and reply kept per model call
-- [x] First application on Weir: agent-demo, proven end to end locally. See [agent-demo on Weir](04-agent-demo-on-weir.md)
-- [x] MCP connections per workspace: made over the API, tools visible to and callable from that workspace only; the install-wide setting is gone
-- [x] The console (SvelteKit) over the read API: overview, workflows with a diagram, runs, tasks, templates, connections. Screenshots in `docs/console/`
-- [x] Events and triggers: `POST /v1/events`, and `triggers:` enforced (event type, an optional `when`, an optional input mapping), so an application reports what happened and Weir finds the workflows. A repeated event starts nothing new. Not yet: a `decide` step in the trigger, and events arriving from a queue
-- [x] Hooks: a `hooks:` block (`on`, `connection`, `path`); queued with the event they report, delivered by the worker, retried up to eight times with a growing wait, and listed in a run's record. Not yet: hooks on a single step, signing the request, and showing them in the console
-- [x] Streams (Server-Sent Events): `GET /v1/runs/{id}/stream` sends a run's events as they happen and resumes from `Last-Event-ID`; `GET /v1/stream` says which runs in a workspace moved. Driven by Postgres `LISTEN`/`NOTIFY`, with a slow look as a safeguard. The console follows both
-- [x] Cancelling a run, and blocked runs counted apart from active ones
-- [ ] Reopening a decision, so that the right person can redo an approval made by the wrong one
-- [ ] Authentication on connections (an ID token from Weir's own identity, an API key, or a bearer secret), so that Weir can reach MCP servers and applications that are not on the local network
-- [ ] An owner on each workflow (an application, git, or the console), then publishing and editing in the console for those it owns
+- [ ] A live call to Jev and to Gemini Decisions (both are tested against stand-in servers; neither has been run with a real key) (#21)
+- [ ] Gemini adapter (the command line, for `ai` steps) (#22)
 - [x] Claude on Bedrock or Vertex AI on the machine's cloud identity, and through an AI gateway, by letting named variables through to the command line; tier models and a model prefix as settings. Tested for what reaches the agent; not yet run against a real account
-- [ ] A runner that hands an `ai` step to an agent hosted elsewhere (AgentCore, Fargate, Cloud Run), as an earlier project of the author's has
-- [ ] Workload identity as a way to sign in (Google Workload Identity Federation, AWS IAM roles, Azure managed identity), beside the OAuth token and the API key. See [Agent runners](03-agent-runners.md)
-- [ ] An `api` runner for `ai` steps with its own tool loop, with Vertex AI, Bedrock and Azure AI Foundry behind it
-- [ ] Provider settings per workspace
+- [ ] A runner that hands an `ai` step to an agent hosted elsewhere (AgentCore, Fargate, Cloud Run), as an earlier project of the author's has (#23)
+- [ ] Workload identity as a way to sign in (Google Workload Identity Federation, AWS IAM roles, Azure managed identity), beside the OAuth token and the API key. See [Agent runners](03-agent-runners.md) (#24)
+- [ ] An `api` runner for `ai` steps with its own tool loop, with Vertex AI, Bedrock and Azure AI Foundry behind it (#25)
+- [ ] Provider settings per workspace (#26)
 - [x] The `fake` runner, for tests and the examples
 - [x] Every model call recorded: template version, prompt hash, tokens, cost (marked measured or notional), duration
 - [x] Budget check before each call, and a budget error that stops the step
-- [ ] Tiers, and routing an AI step to a tier by a decide
-- [ ] The decide step: closed labels, a confidence threshold, a safe default, a fallback provider (all done except the fallback provider; a step can also name its provider and describe its labels)
-- [ ] Shadow mode for routing
+- [ ] Routing an AI step to a tier by a `decide` (tiers exist, and a step names its tier by hand) (#27)
+- [ ] A fallback provider for `decide`, used when the first one fails (today a failure becomes the default label) (#28)
+- [ ] Shadow mode for routing (#29)
+- [ ] Codex steps that can use tools, through the tool proxy (#30)
 
 ### 10. AI steps
 
 - [x] Run an agent through the configured runner, within a budget and a time limit
 - [x] Output validated against the step's JSON Schema
-- [ ] The full transcript stored against the attempt (the prompt as sent and the final reply are stored, with every tool call; the model's turns in between are not)
+- [ ] The full transcript stored against the attempt (the prompt as sent and the final reply are stored, with every tool call; the model's turns in between are not) (#31)
 - [x] The tool proxy, exposed to the command line as its only MCP server: an allow-list per step, with read and write classes (the `approve` class is the next item)
 - [x] Tools from the server's registry and from a workspace's MCP connections exposed to agents
-- [ ] A write under `approve` parks until a person approves that exact call
-- [ ] Tool output marked as data, and a tainted run blocked from writing to a different third party
+- [ ] A write under `approve` parks until a person approves that exact call (#32)
+- [ ] Tool output marked as data, and a tainted run blocked from writing to a different third party (#33)
+- [x] Documents for agents (`files` on an `ai` step), MCP servers as a source of tools, data on a decision, prompt and reply kept per model call
+- [x] MCP connections per workspace: made over the API, tools visible to and callable from that workspace only; the install-wide setting is gone
 
 ### 11. Triggers
 
 - [x] An inbound event endpoint (`POST /v1/events`), which starts nothing new for a repeated event
 - [x] The `match` rule, run on every event at no model cost (the event type and an optional `when`)
-- [ ] The optional `decide` filter, run only on events that pass the rule
-- [ ] Daily counters for matched, dropped and started
-- [ ] A schedule trigger
+- [ ] The optional `decide` filter, run only on events that pass the rule (#34)
+- [ ] Daily counters for matched, dropped and started (#35)
+- [ ] A schedule trigger (#36)
+- [x] Events and triggers: `POST /v1/events`, and `triggers:` enforced (event type, an optional `when`, an optional input mapping), so an application reports what happened and Weir finds the workflows. A repeated event starts nothing new. Not yet: a `decide` step in the trigger, and events arriving from a queue
 
 ### 12. Hooks
 
-- [ ] Hooks declared on a step or a definition (on a definition: done)
+- [ ] Hooks declared on a step or a definition (on a definition: done) (#37)
 - [x] Delivery through the outbox, at least once, with backoff
-- [ ] A signature and a unique delivery id on every request (the id: done; no signature)
+- [ ] A signature and a unique delivery id on every request (the id: done; no signature) (#38)
 - [x] A delivery log (in a run's record), and a failed hook that never fails the run
+- [x] Hooks: a `hooks:` block (`on`, `connection`, `path`); queued with the event they report, delivered by the worker, retried up to eight times with a growing wait, and listed in a run's record. Not yet: hooks on a single step, signing the request, and showing them in the console
 
 ### 13. API, command line and visibility
 
-- [ ] An HTTP API with a published description, covering definitions, runs, approvals and events (the API is built; it has no published description)
+- [ ] An HTTP API with a published description, covering definitions, runs, approvals and events (the API is built; it has no published description) (#39)
 - [x] `weir run`, `weir status`, `weir logs`, `weir approve`, `weir resume`
 - [x] A run timeline: every step, attempt, cost and actor in order
-- [ ] Structured logs and basic metrics
+- [ ] Structured logs and basic metrics (#40)
 - [x] API keys and roles: `WEIR_ADMIN_KEY` turns authentication on; a key belongs to one workspace and is a reader, a writer or an admin; a key may be allowed to act for an application's users; only a hash is stored. Proven with agent-demo running against a locked server
-- [ ] Sign-in for people (single sign-on), so that the console does not need a pasted key and an approver's identity is proven, not asserted by an application
+- [ ] Sign-in for people (single sign-on), so that the console does not need a pasted key and an approver's identity is proven, not asserted by an application (#41)
+- [x] Multi-tenant API: `X-Weir-Workspace` on every request, workspaces listed and created over the API, a test that one workspace cannot see or change another's
+- [x] Read API: workflows, versions, runs, the audit record, templates, connections, usage, the registry
+- [x] The console (SvelteKit) over the read API: overview, workflows with a diagram, runs, tasks, templates, connections. Screenshots in `docs/console/`
+- [x] Streams (Server-Sent Events): `GET /v1/runs/{id}/stream` sends a run's events as they happen and resumes from `Last-Event-ID`; `GET /v1/stream` says which runs in a workspace moved. Driven by Postgres `LISTEN`/`NOTIFY`, with a slow look as a safeguard. The console follows both
+- [ ] The newer endpoints on the command line: events, cancel, workspaces (#42)
+- [ ] Hooks shown in the console, on a run's page (#43)
+- [ ] A live board of what is running now, across a workspace (#44)
 
 ### 14. Examples and conformance
 
-- [ ] The three website examples as real workflows in `examples/`, each with a test (the support inbox is there and has been run for real; it has no automated test, and the other two are not written)
-- [ ] A conformance suite: a definition, its inputs, and the event log it must produce
+- [ ] The three website examples as real workflows in `examples/`, each with a test (the support inbox is there and has been run for real; it has no automated test, and the other two are not written) (#45)
+- [ ] A conformance suite: a definition, its inputs, and the event log it must produce (#46)
 - [x] Crash tests: kill a worker mid-step; send a completion twice; let a lease expire
-- [ ] A quickstart that gets a new reader from clone to a finished run
+- [ ] A quickstart that gets a new reader from clone to a finished run (#47)
+- [x] First application on Weir: agent-demo, proven end to end locally. See [agent-demo on Weir](04-agent-demo-on-weir.md)
 
 ### 15. Release
 
-- [ ] Every item under "What working means" is ticked
-- [ ] README, with the status stated plainly
-- [ ] Internal documents removed or redacted
-- [ ] Tag `v0.1.0`
-- [ ] Publish the repository, and point the website's two placeholder buttons at it
+- [ ] Every item under "What working means" is ticked (#48)
+- [x] README, with the status stated plainly
+- [x] Internal documents removed or redacted
+- [ ] Tag `v0.1.0` (#49)
+- [x] Publish the repository, and point the website at it (public since 17 November 2026)
+
+### 16. Pipes
+
+A Pipe is one package per third party: its connection, the events it sends in, the calls that can be made out, and the tools it gives agents. Most of the parts exist separately; this epic packages them.
+
+- [ ] The package format for a Pipe, and installing one into a workspace (#50)
+- [ ] Inbound webhooks from a third party, with the sender's signature checked, turned into events (#51)
+- [ ] The GitHub Pipe: webhooks in, and tools to read a repository, open a branch, commit and open a pull request (#52)
+- [ ] The Slack Pipe: messages in, and a tool to post (#53)
+- [ ] Connecting a Pipe from the console by signing in to the third party (#54)
+
+### 17. Running in the cloud
+
+Weir is designed to idle at zero. Today a worker polls, so one instance must stay warm.
+
+- [ ] A container image, and `docker compose up` starting Weir itself, not only Postgres (#55)
+- [ ] Work started by the request that causes it (an event, a decision, a callback), so that nothing needs to poll (#56)
+- [ ] Timers and retries fired by a scheduler calling Weir (Cloud Scheduler or Cloud Tasks first) (#57)
+- [ ] Long agent steps run off the request, so that a platform's request time limit does not cut them short (#58)
+- [ ] A guide to running on Cloud Run with Secret Manager, and the same for AWS and Azure (#59)
+- [ ] Secrets created at run time for a hosted service: kept in Postgres, encrypted with a key held by the cloud (#60)
+- [ ] A Helm chart, for those who already run Kubernetes (#61)
+
+### 18. Learning and authoring
+
+Ways to make workflows better and easier to write, each with a person approving the change.
+
+- [ ] Propose a new prompt version from what approvers keep correcting, for a person to review and publish (#62)
+- [ ] Draft a workflow from a description in plain words, for a person to review and publish (#63)
 
 ## The first real tenant: a feature factory on Weir
 
