@@ -32,6 +32,11 @@ import (
 type Claude struct {
 	// Command is the executable. Empty means "claude".
 	Command string
+	// Unrestricted gives the agent every built-in tool and switches the
+	// command line's permission checks off. It is for an agent running in a
+	// container of its own, where the container is the boundary and there is
+	// nothing in reach to protect. Weir's worker never sets it.
+	Unrestricted bool
 	// Shell says whether a step may give its agent a shell. It is off unless
 	// whoever runs the worker turns it on.
 	Shell bool
@@ -69,6 +74,9 @@ func (c *Claude) Name() string { return "cli" }
 
 // Run implements Runner.
 func (c *Claude) Run(ctx context.Context, req RunRequest) (RunResult, error) {
+	if c.Unrestricted {
+		return c.runUnrestricted(ctx, req)
+	}
 	extra, cleanup, err := c.toolArgs(req)
 	if err != nil {
 		return RunResult{}, err
@@ -137,6 +145,12 @@ func (c *Claude) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	if err != nil {
 		return res, err
 	}
+	return finish(req, res, out, dir, before)
+}
+
+// finish gathers what the agent wrote or changed, and its structured output.
+func finish(req RunRequest, res RunResult, out claudeOutput, dir string, before *tree) (RunResult, error) {
+	var err error
 	switch {
 	case before != nil:
 		limit := WriteLimit{}
@@ -157,6 +171,53 @@ func (c *Claude) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	res.Output = out.structured
 	return res, nil
 }
+
+// allTools stands for every built-in tool, with permission checks off.
+const allTools = "*"
+
+// runUnrestricted runs an agent with every tool, in a working directory of
+// its own. See Unrestricted.
+func (c *Claude) runUnrestricted(ctx context.Context, req RunRequest) (RunResult, error) {
+	extra, cleanup, err := c.toolArgs(req)
+	if err != nil {
+		return RunResult{}, err
+	}
+	defer cleanup()
+	if req.Workspace != nil && len(req.Files) > 0 {
+		return RunResult{}, errors.New("a step that works in a prepared directory cannot also be given files")
+	}
+	dir, err := fileDir(req.Files, req.Writes != nil && req.Workspace == nil)
+	if err != nil {
+		return RunResult{}, err
+	}
+	defer os.RemoveAll(dir)
+	system := req.System
+	var before *tree
+	switch {
+	case req.Workspace != nil:
+		prepared, err := req.Workspace.Prepare(ctx, dir)
+		if err != nil {
+			return RunResult{}, fmt.Errorf("prepare the working directory: %w", err)
+		}
+		if before, err = snapshot(dir, prepared.Ignore); err != nil {
+			return RunResult{}, fmt.Errorf("read the prepared directory: %w", err)
+		}
+		system = strings.TrimSpace(system + fmt.Sprintf("\n\nYour working directory (%s) holds the files to work on. Change them in place: every file you add, change or delete there is kept. Nothing you do elsewhere on this machine is kept.", dir))
+	case req.Writes != nil:
+		system = strings.TrimSpace(system + fmt.Sprintf("\n\nWrite every file you produce inside the directory %s (%s). Only files there are kept. At most %d files, %d MB in total.",
+			outDir, filepath.Join(dir, outDir), req.Writes.MaxFiles, req.Writes.MaxBytes>>20))
+	}
+	out, err := c.call(ctx, system, req.Prompt, c.model(req.Tier, req.Model), req.Schema, req.BudgetUSD, allTools, dir, extra...)
+	res := RunResult{Usage: out.usage, Transcript: out.text}
+	if err != nil {
+		return res, err
+	}
+	return finish(req, res, out, dir, before)
+}
+
+// ModelFor returns the model a step would run on, given its tier and the
+// model its template asks for.
+func (c *Claude) ModelFor(tier, fallback string) string { return c.model(tier, fallback) }
 
 // Decide implements Runner.
 func (c *Claude) Decide(ctx context.Context, req DecideRequest) (DecideResult, error) {
@@ -211,14 +272,22 @@ func claudeArgs(system, model string, schema []byte, budgetUSD float64, builtin 
 	args := []string{
 		"--print",
 		"--output-format", "json",
-		"--tools", builtin, // the only built-in tools, usually none
 		"--strict-mcp-config",   // no MCP servers except those Weir names
 		"--setting-sources", "", // ignore user and project settings
-		"--permission-mode", "dontAsk",
 		"--no-session-persistence",
 	}
-	if system != "" {
-		args = append(args, "--system-prompt", system)
+	if builtin == allTools {
+		// An agent in a container of its own: every tool, and no questions.
+		// It keeps the command line's own guidance on how to use them.
+		args = append(args, "--dangerously-skip-permissions")
+		if system != "" {
+			args = append(args, "--append-system-prompt", system)
+		}
+	} else {
+		args = append(args, "--tools", builtin, "--permission-mode", "dontAsk")
+		if system != "" {
+			args = append(args, "--system-prompt", system)
+		}
 	}
 	if model != "" {
 		args = append(args, "--model", model)
@@ -521,6 +590,11 @@ func runCommand(ctx context.Context, name string, args, env []string, stdin, dir
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
 		detail := strings.TrimSpace(stderr.String())
+		if detail == "" {
+			// The command line says why on standard output when it fails early,
+			// for example when it is not signed in.
+			detail = strings.TrimSpace(stdout.String())
+		}
 		if len(detail) > 400 {
 			detail = detail[:400]
 		}

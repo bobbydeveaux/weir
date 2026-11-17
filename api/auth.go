@@ -41,7 +41,7 @@ func principalOf(r *http.Request) *principal {
 // a one-time token for a single attempt, which is their credential. A webhook
 // carries a signature made with the connection's shared secret.
 func open(path string) bool {
-	return path == "/healthz" || strings.HasPrefix(path, "/v1/callbacks/") || strings.HasPrefix(path, "/v1/tools/") ||
+	return path == "/healthz" || strings.HasPrefix(path, "/v1/callbacks/") || strings.HasPrefix(path, "/v1/tools/") || strings.HasPrefix(path, "/v1/agent/") ||
 		strings.HasPrefix(path, "/v1/webhooks/")
 }
 

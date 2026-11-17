@@ -202,6 +202,16 @@ type Worker struct {
 	HTTP *http.Client
 	// PollEvery is the default delay between polls of an external step.
 	PollEvery time.Duration
+	// Launcher, when set, runs every ai step's agent in a container of its
+	// own instead of beside this worker.
+	Launcher Launcher
+	// AgentURL is Weir's address as an agent's container reaches it. Empty
+	// means ToolURL.
+	AgentURL string
+	// Model chooses the model for a step from its tier and the model its
+	// template asks for, when an agent runs in a container. Nil leaves the
+	// template's model as it is.
+	Model func(tier, model string) string
 	// ToolURL is where an agent's tool calls are sent: the address of Weir's
 	// own API as the agent's machine sees it. Empty means CallbackURL.
 	ToolURL string
@@ -481,7 +491,15 @@ func (w *Worker) ai(ctx context.Context, work *engine.Work) error {
 		limit.MaxFiles, limit.MaxBytes = st.Writes.Limits()
 		req.Writes = &limit
 	}
-	res, err := w.Runner.Run(ctx, req)
+	// With a launcher, the agent runs in a container of its own. Without
+	// one, it runs beside this worker.
+	var res runner.RunResult
+	var err error
+	if w.Launcher != nil {
+		res, err = w.isolated(ctx, work, req)
+	} else {
+		res, err = w.Runner.Run(ctx, req)
+	}
 	response := res.Transcript
 	if response == "" {
 		response = string(res.Output)

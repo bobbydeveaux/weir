@@ -80,6 +80,8 @@ erDiagram
 
 **`run_files`** — the files a step produced: the run, the step visit, the path the agent wrote, size, digest, type, and the file's key in the file store. The key is random and holds no part of the path, so nothing an agent writes decides where a file lands. Rows are written in the transaction that completes the step. A file the step deleted from a prepared directory has a row marked `deleted` and no bytes.
 
+**`agent_jobs`** — one row for an agent running in a container of its own: its job, by attempt. The directory it starts from and the result it sends are in the file store. The row and both files are removed when the worker reads the result.
+
 **`schedules`** — when each scheduled trigger of a workflow's live version is next due, with when it last fired and why it could not start a run if it could not. The rows are rewritten each time the workflow is published, and the sweep reads them.
 
 **`connections`** — a named third party, per workspace: its address, whether it is a plain HTTP address or an MCP server (with the tools it offered), and how Weir signs in to it. Signing in is a kind (`bearer`, `header`, `basic` or `github-app`) and `secret_ref`, a reference such as `env:GITHUB_TOKEN`. For a GitHub App, `auth_app` names the App and the secret is its private key. The secret itself is never stored here or anywhere else in the database: it is read from the server's environment or a file when a call is made, and a workspace can name only its own. A connection can also receive: `webhook` says how the third party signs what it sends (GitHub's scheme, or a general HMAC), again with only a reference to the shared secret. The sites a connection may reach are not recorded yet.
