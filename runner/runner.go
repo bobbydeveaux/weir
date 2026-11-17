@@ -74,6 +74,14 @@ type RunRequest struct {
 	Files []File
 	// Writes, when set, lets the agent produce files, up to these limits.
 	Writes *WriteLimit
+	// Shell, when set, gives the agent a sandboxed shell.
+	Shell *Shell
+}
+
+// Shell says what an agent's shell may reach.
+type Shell struct {
+	// Hosts are the only hosts it may connect to. None means no network.
+	Hosts []string
 }
 
 // WriteLimit bounds what an agent may write.

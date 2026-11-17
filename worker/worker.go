@@ -417,6 +417,9 @@ func (w *Worker) ai(ctx context.Context, work *engine.Work) error {
 		}
 		req.Files = append(req.Files, files...)
 	}
+	if st.Shell != nil {
+		req.Shell = &runner.Shell{Hosts: st.Shell.Hosts}
+	}
 	if st.Writes != nil {
 		limit := runner.WriteLimit{}
 		limit.MaxFiles, limit.MaxBytes = st.Writes.Limits()
@@ -429,6 +432,10 @@ func (w *Worker) ai(ctx context.Context, work *engine.Work) error {
 	}
 	call := w.call(work, st.Prompt, system, prompt, response, res.Usage, err)
 	done := context.WithoutCancel(ctx)
+	if errors.Is(err, runner.ErrNoShell) {
+		// Trying again cannot help: the server has to be set up differently.
+		return w.Engine.Fail(done, work.Token, engine.Failure{Type: "shell_unavailable", Message: err.Error(), Actor: w.ID}, call)
+	}
 	if err != nil {
 		return w.Engine.Fail(done, work.Token, engine.Failure{Type: "runner_failed", Message: err.Error(),
 			Retryable: true, Actor: w.ID, CostUSD: res.Usage.CostUSD}, call)

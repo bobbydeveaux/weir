@@ -27,7 +27,7 @@ Then follow [the support inbox example](examples/support-inbox), which classifie
 | Expressions | CEL, for `next` rules, input mappings, triggers and poll conditions |
 | `deterministic` steps | Registered handlers, retries with backoff, an idempotency key per step |
 | `decide` steps | One label from a closed list; an unsure, wrong or failed answer becomes the default. Answered by a small model or a decision model (Jev, Gemini Decisions), chosen per step |
-| `ai` steps | A pinned prompt, a budget, output checked against a JSON Schema, documents the agent may read, files it may write, and tools |
+| `ai` steps | A pinned prompt, a budget, output checked against a JSON Schema, documents the agent may read, files it may write, a sandboxed shell, and tools |
 | `human` steps | An inbox, outcomes, timeouts, escalation, values sent with a decision, and a requester who cannot approve their own run |
 | `external` steps | Call a third party, then resume on a callback with a one-time token, or poll until a condition holds |
 | Tools for agents | Every call goes through a proxy that checks it against the step's list and records it. Tools come from the server, from a workspace's MCP servers, and for GitHub |
@@ -91,6 +91,7 @@ To make one real call through the Claude command line: `WEIR_TEST_CLAUDE=1 go te
 | `WEIR_CLAUDE_MODEL_PREFIX` | Put in front of a model name that begins `claude-`, such as `eu.anthropic.` for Bedrock | none |
 | `WEIR_TYPESAFE_URL`, `WEIR_GEMINI_API_URL` | A different address for Jev or Gemini Decisions, to go through a gateway or proxy | each service's own |
 | `WEIR_BLOB_URL` | Where files are kept: `s3://bucket?region=…`, `gs://bucket`, `azblob://container` or `file:///directory`. See "Where files are kept" below | in Postgres |
+| `WEIR_AGENT_SHELL` | `on` lets a step give its agent a sandboxed shell. See "A shell for an agent" below | off |
 | `WEIR_SECRETS_DIR` | Directory of secret files for `file:` references, with one directory per workspace | none |
 | `WEIR_SECRET__<WORKSPACE>__<NAME>` | The value of the secret a connection in that workspace names as `env:<NAME>` | none |
 | `WEIR_CODEX_MODEL` | Model for steps with `tier: codex`, which run through the Codex command line | Codex's default |
@@ -228,6 +229,39 @@ steps:
 - A step that is visited again replaces what its earlier visit wrote.
 - Going over a limit fails the step, and nothing it wrote is kept. The most a definition may ask for is 200 files and 64 MB; a single file is at most 32 MB.
 - What is not built: the Codex adapter cannot write files, and nothing removes old files yet.
+
+### A shell for an agent
+
+An agent that changes code has to run it. An `ai` step with `shell:` gives its agent a shell, inside a sandbox.
+
+```yaml
+- id: fix
+  kind: ai
+  prompt: fix-dependency@2
+  shell:
+    hosts: [proxy.golang.org, sum.golang.org, "*.githubusercontent.com"]
+  writes: {}
+  output: { schema: { type: object } }
+  budget: { usd: 5, minutes: 30 }
+```
+
+It is off until whoever runs Weir sets `WEIR_AGENT_SHELL=on`. With it on, the shell:
+
+- can write only inside the step's working directory;
+- can reach only the hosts the step lists, and with none listed has no network. A name beginning `*.` covers every host under it;
+- cannot read `WEIR_SECRETS_DIR`, or the places in a home directory that hold credentials (`~/.ssh`, `~/.aws`, `~/.config/gcloud` and the like);
+- sees the short list of environment variables an agent is given, not the worker's own;
+- has no way to ask to leave the sandbox.
+
+The sandbox is the Claude command line's own: Seatbelt on macOS, and `bwrap` with `socat` on Linux. A worker that cannot provide it fails the step and says why. It never runs a shell without one.
+
+Know the limits before turning it on:
+
+- **It is for one team running its own Weir.** The agent runs on the worker, which holds the database password and every workspace's secrets. The sandbox keeps the shell away from them; on a shared or hosted Weir that is not enough separation, and the agent should run somewhere isolated (not built).
+- **Anything named in `WEIR_AGENT_ENV` is visible to the shell,** as is the agent's own sign-in. A step that lists a host can send them there. List only hosts you trust.
+- **Proven on macOS only.** A real agent wrote inside its directory and reached a listed host, and was refused a write to the home directory, an unlisted host, the cloud metadata address and a secrets directory. Linux has not been run.
+- The worker's image needs whatever the code needs: Go, Node, Python and so on.
+- The Codex adapter cannot give an agent a shell.
 
 ### Schedules
 

@@ -60,6 +60,10 @@ func (c *Codex) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		return RunResult{Usage: Usage{Provider: "codex", Model: c.Model}},
 			errors.New("the Codex adapter cannot be given files yet; run this step on a provider that can")
 	}
+	if req.Shell != nil {
+		return RunResult{Usage: Usage{Provider: "codex", Model: c.Model}},
+			fmt.Errorf("%w: the Codex adapter cannot give an agent a shell yet", ErrNoShell)
+	}
 	if req.Writes != nil {
 		return RunResult{Usage: Usage{Provider: "codex", Model: c.Model}},
 			errors.New("the Codex adapter cannot write files yet; run this step on a provider that can")

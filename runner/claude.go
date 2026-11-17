@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -31,6 +32,13 @@ import (
 type Claude struct {
 	// Command is the executable. Empty means "claude".
 	Command string
+	// Shell says whether a step may give its agent a shell. It is off unless
+	// whoever runs the worker turns it on.
+	Shell bool
+	// Hidden lists directories an agent's shell must never read, such as the
+	// one that holds workspaces' secrets. Credential directories in the home
+	// directory are always hidden.
+	Hidden []string
 	// Models maps a tier name to a model. Unlisted tiers use the command line's default.
 	Models map[string]string
 	// ModelPrefix is put in front of a model name that begins "claude-", for
@@ -44,6 +52,10 @@ type Claude struct {
 	// Bridge is the command that starts Weir's MCP bridge, which is how the
 	// agent reaches its tools. Empty means this program followed by "mcp".
 	Bridge []string
+
+	// look finds a program, and os names the operating system. Tests replace them.
+	look func(string) (string, error)
+	os   string
 
 	// run executes the command. Tests replace it.
 	run func(ctx context.Context, name string, args, env []string, stdin, dir string) ([]byte, error)
@@ -66,7 +78,12 @@ func (c *Claude) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	// read that directory and nothing else. An agent that may write is given
 	// one directory inside it to write to, and can write nowhere else.
 	dir, builtin, system := "", "", req.System
-	if len(req.Files) > 0 || req.Writes != nil {
+	if req.Shell != nil {
+		if err := c.shellReady(); err != nil {
+			return RunResult{}, err
+		}
+	}
+	if len(req.Files) > 0 || req.Writes != nil || req.Shell != nil {
 		if dir, err = fileDir(req.Files, req.Writes != nil); err != nil {
 			return RunResult{}, err
 		}
@@ -84,6 +101,14 @@ func (c *Claude) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 			extra = append(extra, "Edit(/"+out+"/**)")
 			system = strings.TrimSpace(system + fmt.Sprintf("\n\nYou can write files. Write every file you produce inside the directory %s (%s). Only files there are kept; you cannot write anywhere else. At most %d files, %d MB in total.",
 				outDir, out, req.Writes.MaxFiles, req.Writes.MaxBytes>>20))
+		}
+		if req.Shell != nil {
+			// The shell runs inside the command line's own sandbox. It can
+			// write only in this directory and reach only the hosts listed.
+			builtin += ",Bash"
+			extra = append(extra, "Bash", "--settings", c.sandbox(req.Shell.Hosts))
+			system = strings.TrimSpace(system + fmt.Sprintf("\n\nYou have a shell. It runs in a sandbox: it can write only inside your working directory (%s), and it can reach only these hosts: %s.",
+				dir, hostList(req.Shell.Hosts)))
 		}
 	}
 	out, err := c.call(ctx, system, req.Prompt, c.model(req.Tier, req.Model), req.Schema, req.BudgetUSD, builtin, dir, extra...)
@@ -285,6 +310,67 @@ func parseClaude(raw []byte) (claudeOutput, error) {
 		out.structured = result.StructuredOutput
 	}
 	return out, nil
+}
+
+// ErrNoShell is returned when a step asks for a shell and this worker will
+// not or cannot give it one safely. Trying again will not help.
+var ErrNoShell = errors.New("no shell for agents")
+
+// shellReady reports whether this worker may give an agent a shell, and can
+// do it inside a sandbox. There is no fallback to a shell without one.
+func (c *Claude) shellReady() error {
+	if !c.Shell {
+		return fmt.Errorf("%w: this server does not allow agents a shell; whoever runs it can set WEIR_AGENT_SHELL=on", ErrNoShell)
+	}
+	look := c.look
+	if look == nil {
+		look = exec.LookPath
+	}
+	if c.goos() == "linux" {
+		// On Linux the sandbox is built from these two programs.
+		for _, program := range []string{"bwrap", "socat"} {
+			if _, err := look(program); err != nil {
+				return fmt.Errorf("%w: the sandbox needs %s, which is not installed on this worker", ErrNoShell, program)
+			}
+		}
+	} else if c.goos() != "darwin" {
+		return fmt.Errorf("%w: there is no sandbox for a shell on %s", ErrNoShell, c.goos())
+	}
+	return nil
+}
+
+func (c *Claude) goos() string {
+	if c.os != "" {
+		return c.os
+	}
+	return runtime.GOOS
+}
+
+// alwaysHidden are the places in a home directory that hold credentials. An
+// agent's shell can never read them, whatever else it may read.
+var alwaysHidden = []string{"~/.ssh", "~/.aws", "~/.azure", "~/.config/gcloud", "~/.kube", "~/.docker", "~/.gnupg", "~/.netrc", "~/.npmrc", "~/.git-credentials"}
+
+// sandbox is the settings that turn the command line's sandbox on, with no
+// way out of it, for a shell that may reach only hosts.
+func (c *Claude) sandbox(hosts []string) string {
+	if hosts == nil {
+		hosts = []string{}
+	}
+	settings, _ := json.Marshal(map[string]any{"sandbox": map[string]any{
+		"enabled":                  true,
+		"autoAllowBashIfSandboxed": false,
+		"allowUnsandboxedCommands": false, // the agent cannot ask to leave the sandbox
+		"network":                  map[string]any{"allowedDomains": hosts},
+		"filesystem":               map[string]any{"denyRead": append(append([]string{}, alwaysHidden...), c.Hidden...)},
+	}})
+	return string(settings)
+}
+
+func hostList(hosts []string) string {
+	if len(hosts) == 0 {
+		return "none"
+	}
+	return strings.Join(hosts, ", ")
 }
 
 // outDir is the directory, inside an agent's working directory, that it may
