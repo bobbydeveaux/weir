@@ -24,7 +24,7 @@ A real workflow has run end to end from the command line with the Claude command
 | 9 Gateway and decide | Mostly done | A live call to Jev and to Gemini Decisions (no keys yet); the Gemini command line; Codex steps with tools; a fallback provider; shadow mode; workload identity and a direct-call runner |
 | 10 AI steps | Mostly done | The `approve` class of tool; marking tool output as data; the full transcript (the prompt and the final reply are kept, the turns in between are not) |
 | 11 Triggers | Mostly done | A `decide` filter in a trigger; counters; a schedule trigger |
-| 12 Hooks | Mostly done | A signature on each request; hooks on a single step |
+| 12 Hooks | Mostly done | Hooks on a single step |
 | 13 API and command line | Mostly done | Sign-in for people (the console takes a key today); a published API description; logs and metrics; the newer endpoints on the command line |
 | 14 Examples and conformance | Started | Two more examples; tests for all three; the conformance suite. A real application (agent-demo) runs on Weir, which the plan did not ask for |
 | 15 Release | Started | The repository is public. No tagged version yet |
@@ -246,7 +246,7 @@ How work is claimed, held and returned.
 
 - [ ] Hooks declared on a step or a definition (on a definition: done) (#37)
 - [x] Delivery through the outbox, at least once, with backoff
-- [ ] A signature and a unique delivery id on every request (the id: done; no signature) (#38)
+- [x] A signature and a unique delivery id on every request: a hook may name a shared secret, and is then sent with `Weir-Timestamp` and `Weir-Signature`, the HMAC-SHA256 of the timestamp and the body. A hook with no secret is sent unsigned, as before (#38)
 - [x] A delivery log (in a run's record), and a failed hook that never fails the run
 - [x] Hooks: a `hooks:` block (`on`, `connection`, `path`); queued with the event they report, delivered by the worker, retried up to eight times with a growing wait, and listed in a run's record. Not yet: hooks on a single step, signing the request, and showing them in the console
 

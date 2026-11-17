@@ -31,7 +31,7 @@ func (e *Engine) enqueueHooks(ctx context.Context, tx pgx.Tx, run *runRow, stepI
 			}
 		}
 		payload, err := json.Marshal(map[string]any{
-			"connection": h.Connection, "path": h.Path,
+			"connection": h.Connection, "path": h.Path, "secret": h.Secret,
 			"body": map[string]any{
 				"type": typ, "run_id": run.id, "seq": seq, "step": step, "actor": actor,
 				"workflow":  map[string]any{"namespace": run.def.Namespace, "name": run.def.Name, "version": run.def.Version},
@@ -56,8 +56,11 @@ type HookDelivery struct {
 	// URL is where to post Body.
 	URL  string
 	Body json.RawMessage
-	// To is the connection the hook goes to, for signing the request.
+	// To is the connection the hook goes to, for signing in to it.
 	To Endpoint
+	// Secret, when set, is a reference to the shared secret the hook is
+	// signed with, so that the receiver can check it came from Weir.
+	Secret string
 }
 
 // DeliverHooks sends every hook that is due, one at a time, using send. A
@@ -88,13 +91,14 @@ func (e *Engine) DeliverHooks(ctx context.Context, send func(context.Context, Ho
 				Connection string          `json:"connection"`
 				Path       string          `json:"path"`
 				Body       json.RawMessage `json:"body"`
+				Secret     string          `json:"secret"`
 			}
 			if err := json.Unmarshal([]byte(payload), &p); err != nil {
 				return err
 			}
 			to, sendErr := e.endpoint(ctx, tx, workspace, p.Connection)
 			if sendErr == nil {
-				sendErr = send(ctx, HookDelivery{ID: fmt.Sprintf("hook-%d", id), URL: to.URL + p.Path, Body: p.Body, To: to})
+				sendErr = send(ctx, HookDelivery{ID: fmt.Sprintf("hook-%d", id), URL: to.URL + p.Path, Body: p.Body, To: to, Secret: p.Secret})
 			}
 			if sendErr == nil {
 				delivered++
