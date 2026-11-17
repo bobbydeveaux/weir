@@ -162,6 +162,44 @@ triggers:
 
 Not yet: Slack's signature scheme, and refusing an old request that is replayed without a delivery id.
 
+### GitHub tools
+
+An agent can read a repository and propose a change to it. The tools go through a connection, so Weir adds the token, checks each call against the step's list, and records it. The agent never sees the token.
+
+```bash
+export WEIR_SECRET__MY_APP__GH_TOKEN=…
+weir connection github https://api.github.com/repos/acme/app --workspace my-app --auth bearer --secret env:GH_TOKEN
+```
+
+```yaml
+- id: fix
+  kind: ai
+  prompt: fix-the-bug@1
+  tools:
+    read: [github.get_file, github.list_files, github.get_pull_request]
+    write: [github.create_branch, github.put_file, github.open_pull_request, github.comment]
+  budget: { usd: 2.00 }
+```
+
+| Tool | Class | Does |
+|---|---|---|
+| `github.get_file` | read | Reads one text file, up to 200 KB |
+| `github.list_files` | read | Lists a directory |
+| `github.get_pull_request` | read | A pull request's title, description, branches and changed files |
+| `github.create_branch` | write | Creates a branch |
+| `github.put_file` | write | Creates or replaces one file on a branch, as a commit |
+| `github.open_pull_request` | write | Opens a pull request from a branch |
+| `github.comment` | write | Comments on an issue or a pull request |
+
+- **Pin a connection to one repository** by giving it the address `https://api.github.com/repos/<owner>/<name>`, as above. The tools then work on that repository only. An agent that has been talked into something cannot reach another repository the token happens to cover. A connection to `https://api.github.com` reaches any repository the token allows, and each call must name one.
+- **An agent cannot write to the default branch.** `github.put_file` refuses it. The way in is a branch and a pull request, which a person or a check can turn down.
+- **Writes are safe to repeat.** A branch or pull request that already exists is returned, and writing the same content again changes nothing, so a retried step does not fail for having worked the first time.
+- Give the token only what the workflow needs. A fine-grained token for one repository, with contents and pull requests, is enough for all seven tools.
+
+With a webhook on the same connection (above), a pull request can start a workflow whose agent reads it and replies.
+
+The read tools have been run against the real GitHub. The write tools have been tested against a stand-in only.
+
 ### Bedrock, Vertex AI and gateways
 
 An agent's command line is started with almost none of the server's environment, so that nothing on the machine can change how an agent behaves. To send Claude somewhere other than Anthropic's own API, name the variables to let through.
