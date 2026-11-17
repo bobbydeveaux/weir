@@ -10,7 +10,9 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"mime"
 	"net/http"
+	"path"
 	"strconv"
 
 	"github.com/bobbydeveaux/weir/engine"
@@ -56,6 +58,10 @@ func New(eng *engine.Engine, reg *worker.Registry, opts ...Option) http.Handler 
 	mux.HandleFunc("GET /v1/runs/{id}/record", s.raw(func(r *http.Request) (json.RawMessage, error) {
 		return s.in(r).RunRecord(r.Context(), r.PathValue("id"))
 	}))
+	mux.HandleFunc("GET /v1/runs/{id}/files", s.raw(func(r *http.Request) (json.RawMessage, error) {
+		return s.in(r).RunFiles(r.Context(), r.PathValue("id"))
+	}))
+	mux.HandleFunc("GET /v1/runs/{id}/files/{step}/{path...}", s.file)
 	mux.HandleFunc("GET /v1/usage", s.raw(func(r *http.Request) (json.RawMessage, error) {
 		days, _ := strconv.Atoi(r.URL.Query().Get("days"))
 		return s.in(r).Usage(r.Context(), r.URL.Query().Get("namespace"), days)
@@ -599,4 +605,21 @@ func (s *server) receives(w http.ResponseWriter, r *http.Request, hook *engine.W
 		"secret_found": found, "secret_read_from": readFrom,
 	}
 	return true
+}
+
+// file sends one file a step of a run produced. It is always sent as a
+// download: an agent wrote it, so a browser must never run it as a page.
+func (s *server) file(w http.ResponseWriter, r *http.Request) {
+	body, rec, err := s.in(r).OpenFile(r.Context(), r.PathValue("id"), r.PathValue("step"), r.PathValue("path"))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	defer body.Close()
+	w.Header().Set("Content-Type", rec.ContentType)
+	w.Header().Set("Content-Length", strconv.FormatInt(rec.Size, 10))
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": path.Base(rec.Path)}))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Weir-File-Sha256", rec.SHA256)
+	_, _ = io.Copy(w, body)
 }

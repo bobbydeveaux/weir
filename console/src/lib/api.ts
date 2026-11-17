@@ -9,6 +9,7 @@ import type {
 	InboundEvent,
 	Registry,
 	TriggerRow,
+	RunFile,
 	RunRecord,
 	RunSummary,
 	RunView,
@@ -55,6 +56,28 @@ interface Options {
 
 function absolute(path: string): string {
 	return typeof location === 'undefined' ? path : location.origin + path;
+}
+
+/**
+ * Fetches a file with the session's headers and saves it. A plain link cannot
+ * do this, because it cannot carry the workspace or the API key.
+ */
+async function download(path: string, name: string): Promise<void> {
+	const url = API_BASE + path;
+	const headers: Record<string, string> = { 'X-Weir-Workspace': session.workspace || 'default' };
+	if (session.key) headers['Authorization'] = `Bearer ${session.key}`;
+	let res: Response;
+	try {
+		res = await fetch(url, { headers });
+	} catch (e) {
+		throw down(url, e instanceof Error ? e.message : 'the request failed');
+	}
+	if (!res.ok) throw new ApiError(`The file could not be fetched (${res.status}).`, res.status, url);
+	const link = document.createElement('a');
+	link.href = URL.createObjectURL(await res.blob());
+	link.download = name.split('/').pop() || 'file';
+	link.click();
+	URL.revokeObjectURL(link.href);
 }
 
 async function request<T>(method: string, path: string, opts: Options = {}): Promise<T> {
@@ -149,6 +172,9 @@ export const api = {
 	run: (id: string) =>
 		request<RunView>('GET', `/runs/${enc(id)}`).then((r) => ({ ...r, steps: r.steps ?? [], events: r.events ?? [] })),
 	runRecord: (id: string) => request<RunRecord>('GET', `/runs/${enc(id)}/record`),
+	runFiles: (id: string) => request<RunFile[]>('GET', `/runs/${enc(id)}/files`).then((f) => f ?? []),
+	/** Fetches one file a step produced and hands it to the browser to save. */
+	downloadFile: (id: string, file: RunFile) => download(`/runs/${enc(id)}/files/${enc(file.step)}/${file.path.split('/').map(enc).join('/')}`, file.path),
 	startRun: (body: StartRunRequest) => request<StartRunResponse>('POST', '/runs', { body, write: true }),
 	/** budgetUsd, when above zero, replaces the run's budget. */
 	resumeRun: (id: string, budgetUsd?: number) =>

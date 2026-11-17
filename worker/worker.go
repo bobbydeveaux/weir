@@ -410,12 +410,17 @@ func (w *Worker) ai(ctx context.Context, work *engine.Work) error {
 		req.ToolURL, req.ToolToken = strings.TrimRight(w.toolURL(), "/"), work.Token
 	}
 	for _, ref := range st.Files {
-		file, err := w.fetch(ctx, work, ref)
+		files, err := w.files(ctx, work, ref)
 		if err != nil {
 			return w.Engine.Fail(context.WithoutCancel(ctx), work.Token, engine.Failure{Type: "file_unavailable",
 				Message: err.Error(), Retryable: true, Actor: w.ID})
 		}
-		req.Files = append(req.Files, file)
+		req.Files = append(req.Files, files...)
+	}
+	if st.Writes != nil {
+		limit := runner.WriteLimit{}
+		limit.MaxFiles, limit.MaxBytes = st.Writes.Limits()
+		req.Writes = &limit
 	}
 	res, err := w.Runner.Run(ctx, req)
 	response := res.Transcript
@@ -433,7 +438,40 @@ func (w *Worker) ai(ctx context.Context, work *engine.Work) error {
 			Message: fmt.Sprintf("the step spent $%.2f of a $%.2f budget", res.Usage.CostUSD, st.Budget.USD),
 			Actor:   w.ID, CostUSD: res.Usage.CostUSD}, call)
 	}
-	return w.Engine.Complete(done, work.Token, engine.Result{Output: res.Output, Actor: w.ID, Calls: []engine.AICall{call}})
+	// What the agent wrote is kept before the step completes, and recorded as
+	// part of completing it. If the step does not complete, it is dropped.
+	produced := make([]engine.NewFile, 0, len(res.Files))
+	for _, f := range res.Files {
+		produced = append(produced, engine.NewFile{Path: f.Name, Data: f.Data})
+	}
+	kept, err := w.Engine.KeepFiles(done, work.RunID, produced)
+	if err != nil {
+		return w.Engine.Fail(done, work.Token, engine.Failure{Type: "files_not_kept", Message: err.Error(),
+			Retryable: true, Actor: w.ID, CostUSD: res.Usage.CostUSD}, call)
+	}
+	err = w.Engine.Complete(done, work.Token, engine.Result{Output: res.Output, Actor: w.ID, Calls: []engine.AICall{call}, Files: kept})
+	if err != nil {
+		w.Engine.DropFiles(done, kept)
+	}
+	return err
+}
+
+// files gathers what one entry of a step's files gives its agent: every file
+// an earlier step produced, or one document fetched from a connection.
+func (w *Worker) files(ctx context.Context, work *engine.Work, ref spec.FileRef) ([]runner.File, error) {
+	if ref.Step == "" {
+		file, err := w.fetch(ctx, work, ref)
+		return []runner.File{file}, err
+	}
+	produced, err := w.Engine.StepFiles(ctx, work.RunID, ref.Step)
+	if err != nil {
+		return nil, fmt.Errorf("files of step %s: %w", ref.Step, err)
+	}
+	out := make([]runner.File, 0, len(produced))
+	for _, f := range produced {
+		out = append(out, runner.File{Name: f.Path, Data: f.Data})
+	}
+	return out, nil
 }
 
 // call builds the audit record for one model call.

@@ -27,7 +27,7 @@ Then follow [the support inbox example](examples/support-inbox), which classifie
 | Expressions | CEL, for `next` rules, input mappings, triggers and poll conditions |
 | `deterministic` steps | Registered handlers, retries with backoff, an idempotency key per step |
 | `decide` steps | One label from a closed list; an unsure, wrong or failed answer becomes the default. Answered by a small model or a decision model (Jev, Gemini Decisions), chosen per step |
-| `ai` steps | A pinned prompt, a budget, output checked against a JSON Schema, documents the agent may read, and tools |
+| `ai` steps | A pinned prompt, a budget, output checked against a JSON Schema, documents the agent may read, files it may write, and tools |
 | `human` steps | An inbox, outcomes, timeouts, escalation, values sent with a decision, and a requester who cannot approve their own run |
 | `external` steps | Call a third party, then resume on a callback with a one-time token, or poll until a condition holds |
 | Tools for agents | Every call goes through a proxy that checks it against the step's list and records it. Tools come from the server, from a workspace's MCP servers, and for GitHub |
@@ -192,9 +192,42 @@ A file is at most 32 MB. One that is larger is refused and nothing of it is kept
 
 The cloud storage libraries are most of the size of the `weir` program: about 88 MB with them, about 27 MB without. If you will only ever keep files in Postgres, build with `go build -tags nobuckets ./cmd/weir`.
 
-Nothing uses the store yet. An agent producing files into it is the next item.
-
 The same tests run against every kind of storage. They pass for Postgres, for a directory, and for S3 through the AWS library against an S3-compatible server. Google Cloud Storage and Azure have not been run.
+
+### Files an agent writes
+
+An `ai` step with `writes:` may produce files. Weir keeps them in the file store, and a later step or your application collects them.
+
+```yaml
+steps:
+  - id: draft
+    kind: ai
+    prompt: draft-change@3
+    writes: { max_files: 20, max_megabytes: 8 }   # these are the defaults; "writes: {}" is enough
+    output: { schema: { type: object } }
+    budget: { usd: 2 }
+
+  - id: review                     # another agent is given everything draft wrote
+    kind: ai
+    prompt: review-change@1
+    files:
+      - step: draft
+    output: { schema: { type: object } }
+    budget: { usd: 1 }
+
+  - id: commit                     # your code is told what was written, and fetches it
+    kind: external
+    connection: my-app
+    call: { path: /commit }
+    input: { run: run.id, files: steps.draft.files }
+```
+
+- The agent is given one directory, `out`, and can write nowhere else. Where files go inside it is up to your prompt.
+- `steps.<id>.files` is a list of `path`, `size`, `sha256` and `content_type`. It holds no contents.
+- Your application lists a run's files with `GET /v1/runs/{id}/files` and downloads one with `GET /v1/runs/{id}/files/{step}/{path}`. Both are scoped to the workspace. A download is always sent as an attachment, with its digest in `Weir-File-Sha256`.
+- A step that is visited again replaces what its earlier visit wrote.
+- Going over a limit fails the step, and nothing it wrote is kept. The most a definition may ask for is 200 files and 64 MB; a single file is at most 32 MB.
+- What is not built: the Codex adapter cannot write files, and nothing removes old files yet.
 
 ### Schedules
 

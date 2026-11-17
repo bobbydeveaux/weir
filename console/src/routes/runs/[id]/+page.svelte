@@ -14,7 +14,7 @@
 	import { useQuery } from '#lib/query.svelte.ts';
 	import { useStream } from '#lib/stream.svelte.ts';
 	import { clock, session, stale } from '#lib/session.svelte.ts';
-	import type { SpecStep, StepOverlay, StepView } from '#lib/types.ts';
+	import type { RunFile, SpecStep, StepOverlay, StepView } from '#lib/types.ts';
 	import { untrack } from 'svelte';
 
 	// The stream brings news at once; this poll is only a safety net.
@@ -23,6 +23,19 @@
 
 	const run = useQuery(() => api.run(id), { refresh: (r) => (r && isActive(r.status) ? POLL_MS : 0) });
 	const record = useQuery(() => api.runRecord(id), { refresh: () => (run.data && isActive(run.data.status) ? POLL_MS : 0) });
+	const files = useQuery(() => api.runFiles(id), { refresh: () => (run.data && isActive(run.data.status) ? POLL_MS : 0) });
+	let fileError = $state('');
+	async function save(file: RunFile) {
+		fileError = '';
+		try {
+			await api.downloadFile(id, file);
+		} catch (e) {
+			fileError = toApiError(e).message;
+		}
+	}
+	function size(n: number): string {
+		return n < 1024 ? `${n} B` : n < 1 << 20 ? `${(n / 1024).toFixed(1)} KB` : `${(n / (1 << 20)).toFixed(1)} MB`;
+	}
 	const tasks = useQuery(() => api.tasks(), { refresh: () => (run.data && isActive(run.data.status) ? POLL_MS : 0) });
 
 	useStream(
@@ -368,6 +381,34 @@
 			</section>
 		</div>
 
+		{#if files.data && files.data.length > 0}
+			<section class="panel">
+				<div class="panel-head">
+					<h2>Files</h2>
+					<span class="muted">{files.data.length} written by this run's steps</span>
+				</div>
+				<div class="panel-body">
+					{#if fileError}<p class="muted" role="alert">{fileError}</p>{/if}
+					<table class="table">
+						<thead>
+							<tr><th>Step</th><th>Path</th><th>Type</th><th class="num">Size</th><th></th></tr>
+						</thead>
+						<tbody>
+							{#each files.data as f (f.step + '/' + f.path)}
+								<tr>
+									<td class="mono">{f.step}</td>
+									<td class="mono">{f.path}</td>
+									<td class="muted">{f.content_type.split(';')[0]}</td>
+									<td class="num">{size(f.size)}</td>
+									<td class="num"><button type="button" class="link plain" onclick={() => save(f)}>Download</button></td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+			</section>
+		{/if}
+
 		<section class="panel">
 			<div class="panel-head">
 				<h2>Event log</h2>
@@ -419,6 +460,14 @@
 </div>
 
 <style>
+	.plain {
+		background: none;
+		border: 0;
+		padding: 0;
+		font: inherit;
+		cursor: pointer;
+	}
+
 	.title {
 		display: flex;
 		align-items: center;
