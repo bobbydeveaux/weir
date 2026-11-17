@@ -153,14 +153,15 @@ func (e *Engine) ToolCalls(ctx context.Context, runID string) ([]ToolCall, error
 	return out, rows.Err()
 }
 
-// ConnectionURL returns the base address of a named third party, as the
-// workspace that owns runID knows it.
-func (e *Engine) ConnectionURL(ctx context.Context, runID, name string) (string, error) {
+// Endpoint returns a named connection as the workspace that owns runID knows
+// it: its address, and how to sign in. A run can use only its own workspace's
+// connections.
+func (e *Engine) Endpoint(ctx context.Context, runID, name string) (Endpoint, error) {
 	var workspace string
 	if err := e.pool.QueryRow(ctx, `SELECT workspace_id::text FROM runs WHERE id = $1::uuid`, runID).Scan(&workspace); err != nil {
-		return "", fmt.Errorf("run %s: %w", runID, ErrNotFound)
+		return Endpoint{}, fmt.Errorf("run %s: %w", runID, ErrNotFound)
 	}
-	return e.connectionURL(ctx, e.pool, workspace, name)
+	return e.endpoint(ctx, e.pool, workspace, name)
 }
 
 func (e *Engine) checkTools(ctx context.Context, def *spec.Definition) error {

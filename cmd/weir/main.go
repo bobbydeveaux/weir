@@ -43,6 +43,8 @@ Defining work:
   publish <file.yaml>              Publish a workflow as a new version
   template <key> --user <text>     Publish a prompt or decide template as a new version
   connection <name> <base-url>     Create or update a third party
+                                   [--auth bearer|header|basic] [--secret env:NAME|file:name]
+                                   [--header <name>] [--username <name>] [--mcp] [--read-only] [--workspace default]
 
 Running work:
   run <namespace>/<name>           Start a run            [--input <json>] [--key <idempotency-key>]
@@ -67,6 +69,9 @@ Environment:
   WEIR_PUBLIC_URL    Address third parties use to reach the API (default http://localhost:8080)
   WEIR_RUNNER        How ai and decide steps run: cli, api or fake (default cli)
   WEIR_ADMIN_KEY     Turns authentication on, and is the key that may do anything
+  WEIR_SECRETS_DIR   Directory of secret files, one directory per workspace, for file: references
+  WEIR_SECRET__<WORKSPACE>__<NAME>
+                     The value of a connection's secret named env:<NAME> in that workspace
 `
 
 func main() {
@@ -335,19 +340,56 @@ func (a *app) template(args []string) error {
 
 func (a *app) connection(args []string) error {
 	fs, _ := a.flags("connection")
+	workspace := fs.String("workspace", "default", "the workspace the connection belongs to")
+	kind := fs.String("auth", "", "how to sign in: bearer, header or basic")
+	secret := fs.String("secret", "", "the secret to sign in with, by reference: env:NAME or file:name")
+	header := fs.String("header", "", "the header to send, for --auth header")
+	username := fs.String("username", "", "the user name, for --auth basic")
+	mcp := fs.Bool("mcp", false, "the address is an MCP server, whose tools join the workspace")
+	readOnly := fs.Bool("read-only", false, "with --mcp: treat every tool as a read")
 	pos, err := parse(fs, args, 2)
 	if err != nil {
 		return err
 	}
-	eng, _, done, err := a.engine()
+	root, _, done, err := a.engine()
 	if err != nil {
 		return err
 	}
 	defer done()
-	if err := eng.PutConnection(a.ctx, pos[0], pos[1]); err != nil {
+	eng, err := root.In(a.ctx, *workspace)
+	if err != nil {
 		return err
 	}
-	fmt.Fprintf(a.out, "connection %s points at %s\n", pos[0], pos[1])
+	auth := engine.Auth{Kind: *kind, Secret: *secret, Header: *header, Username: *username}
+	if *mcp {
+		// Ask the server what it offers now, signed in as the connection.
+		to := engine.Endpoint{Connection: pos[0], URL: pos[1], Workspace: *workspace, Auth: auth}
+		if err := auth.Check(); err != nil {
+			return err
+		}
+		tools, err := worker.DiscoverMCP(a.ctx, a.reg, to)
+		if err != nil {
+			return fmt.Errorf("the MCP server could not be asked for its tools: %w", err)
+		}
+		if err := eng.PutMCPConnection(a.ctx, pos[0], pos[1], *readOnly, auth, tools); err != nil {
+			return err
+		}
+		fmt.Fprintf(a.out, "connection %s points at the MCP server %s, which offers %d tool(s)\n", pos[0], pos[1], len(tools))
+	} else {
+		if err := eng.PutConnection(a.ctx, pos[0], pos[1], auth); err != nil {
+			return err
+		}
+		fmt.Fprintf(a.out, "connection %s points at %s\n", pos[0], pos[1])
+	}
+	if auth.Secret != "" {
+		// The secret is never given to Weir: say where the server reads it from.
+		found, readFrom := a.reg.SecretStatus(*workspace, auth.Secret)
+		state := "is set"
+		if !found {
+			state = "is NOT set yet; calls through this connection will fail until it is"
+		}
+		fmt.Fprintf(a.out, "it signs in with %s, read from %s, which %s\n", auth.Secret, readFrom, state)
+	}
 	return nil
 }
 

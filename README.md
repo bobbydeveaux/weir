@@ -79,6 +79,8 @@ To make one real call through the Claude command line: `WEIR_TEST_CLAUDE=1 go te
 | `WEIR_CLAUDE_MODELS` | The model for each tier, as `small=…,large=…` | `small=haiku,large=opus` |
 | `WEIR_CLAUDE_MODEL_PREFIX` | Put in front of a model name that begins `claude-`, such as `eu.anthropic.` for Bedrock | none |
 | `WEIR_TYPESAFE_URL`, `WEIR_GEMINI_API_URL` | A different address for Jev or Gemini Decisions, to go through a gateway or proxy | each service's own |
+| `WEIR_SECRETS_DIR` | Directory of secret files for `file:` references, with one directory per workspace | none |
+| `WEIR_SECRET__<WORKSPACE>__<NAME>` | The value of the secret a connection in that workspace names as `env:<NAME>` | none |
 | `WEIR_CODEX_MODEL` | Model for steps with `tier: codex`, which run through the Codex command line | Codex's default |
 
 The `cli` runner keeps the command line's permission checks on, offers it no built-in tools, ignores user and project settings, and passes it a short list of environment variables rather than the worker's own.
@@ -99,7 +101,40 @@ curl $WEIR/v1/runs -H "Authorization: Bearer weir_3f9c…"
 - A key acts as itself: its name is the actor on everything it does. A key made with `--act-as` may name the person it is acting for in `X-Weir-Actor`, which is for an application with its own sign-in.
 - Callbacks and an agent's tool calls carry a one-time token for a single attempt and need no key.
 
-Not yet: sign-in for people, authentication on connections, and signed hooks.
+Not yet: sign-in for people, and signed hooks.
+
+### Credentials for connections
+
+A connection can say how Weir proves who it is to the other side. Weir holds the name of the secret and never its value: the platform Weir runs on supplies that, as an environment variable or a file, which is something Cloud Run, AWS, Azure and Kubernetes can all do.
+
+```bash
+# The secret, given to the Weir server by the platform:
+export WEIR_SECRET__MY_APP__GITHUB_TOKEN=ghp_…
+
+# The connection, which only names it:
+weir connection github https://api.github.com --workspace my-app --auth bearer --secret env:GITHUB_TOKEN
+```
+
+| Kind | Sends |
+|---|---|
+| `bearer` | `Authorization: Bearer <secret>` |
+| `header` | `<header>: <secret>`, with `--header X-Api-Key` |
+| `basic` | `Authorization: Basic …`, with `--username` |
+
+A secret is named in one of two ways, and a workspace can name only its own:
+
+| Reference | In workspace `my-app`, read from |
+|---|---|
+| `env:GITHUB_TOKEN` | the variable `WEIR_SECRET__MY_APP__GITHUB_TOKEN` |
+| `file:github-token` | the file `$WEIR_SECRETS_DIR/my-app/github-token` |
+
+- The reference is a short name, not a variable or a path. A workspace cannot name the server's own settings, a file elsewhere on the machine, or another workspace's secret.
+- The credential is added to every call made through the connection: an external step, a document fetched for an agent, an agent's tool call, a hook, and an MCP server. An agent names a connection and never sees the credential.
+- The value is read when the call is made. It is not written to the database, an event, a log or any reply.
+- If the secret is not there, the call is not made. The step fails with a message naming the variable or file to set, and the run waits to be resumed.
+- A redirect to a different host is not followed, so a third party cannot send the credential somewhere else.
+
+Not yet: signing in with the machine's own cloud identity, with no secret at all, and limiting which addresses a connection may point at.
 
 ### Bedrock, Vertex AI and gateways
 

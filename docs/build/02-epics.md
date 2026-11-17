@@ -20,7 +20,7 @@ A real workflow has run end to end from the command line with the Claude command
 | 5 Workers and tokens | Mostly done | Waking a worker on a Postgres notification (streams already use them; workers still poll) |
 | 6 Deterministic steps | Mostly done | Typed handlers; HTTP and wait built-ins |
 | 7 Human steps | Mostly done | Checking that the person deciding holds the role; reopening a decision |
-| 8 External steps | Mostly done | Credentials on connections, which blocks Pipes and anything off the local network; allowed addresses |
+| 8 External steps | Mostly done | Signing in with the machine's own cloud identity; allowed addresses |
 | 9 Gateway and decide | Mostly done | A live call to Jev and to Gemini Decisions (no keys yet); the Gemini command line; Codex steps with tools; a fallback provider; shadow mode; workload identity and a direct-call runner |
 | 10 AI steps | Mostly done | The `approve` class of tool; marking tool output as data; the full transcript (the prompt and the final reply are kept, the turns in between are not) |
 | 11 Triggers | Mostly done | A `decide` filter in a trigger; counters; a schedule trigger |
@@ -28,7 +28,7 @@ A real workflow has run end to end from the command line with the Claude command
 | 13 API and command line | Mostly done | Sign-in for people (the console takes a key today); a published API description; logs and metrics; the newer endpoints on the command line |
 | 14 Examples and conformance | Started | Two more examples; tests for all three; the conformance suite. A real application (agent-demo) runs on Weir, which the plan did not ask for |
 | 15 Release | Started | The repository is public. No tagged version yet |
-| 16 Pipes | Not started | Needs credentials on connections first |
+| 16 Pipes | Not started | Credentials on connections are in, so this is unblocked |
 | 17 Running in the cloud | Not started | Weir does not idle at zero yet |
 | 18 Learning and authoring | Not started |  |
 
@@ -192,7 +192,7 @@ How work is claimed, held and returned.
 - [x] A callback endpoint that accepts the token and validates the payload against the output schema
 - [x] Poll mode: repeat until a declared condition holds
 - [x] A fake third party for tests
-- [ ] Credentials on a connection, held by reference and never stored: `env:NAME` and `file:/path`, sent as a bearer token, a header or basic auth. This is what every platform (Cloud Run, AWS, Azure, Kubernetes) can supply, and it unblocks Pipes (#17)
+- [x] Credentials on a connection, held by reference and never stored: `env:NAME` and `file:name`, sent as a bearer token, a header or basic auth, on every call made through the connection (external steps, files, tools, hooks, MCP). A workspace can name only its own secrets. Tested against stand-in servers; not yet used against a real third party (#17)
 - [ ] An ID token from the machine's own identity as a connection credential, for one cloud service calling another with no secret at all (#18)
 - [ ] Allowed addresses for connections, so that a workspace cannot point Weir at anything it can reach (#19)
 

@@ -280,8 +280,8 @@ type Work struct {
 	IdempotencyKey string
 	// Template is set for decide and ai steps.
 	Template *Template
-	// ConnectionURL is set for external steps.
-	ConnectionURL string
+	// Connection is set for external steps: where to call, and how to sign in.
+	Connection Endpoint
 }
 
 // Claim takes the next runnable step of one of the given kinds and returns it
@@ -325,7 +325,7 @@ func (e *Engine) Claim(ctx context.Context, kinds []string, workerID string, lea
 		case spec.KindAI:
 			w.Template, err = e.loadTemplate(ctx, tx, run.workspace, st.Prompt)
 		case spec.KindExternal:
-			w.ConnectionURL, err = e.connectionURL(ctx, tx, run.workspace, st.Connection)
+			w.Connection, err = e.endpoint(ctx, tx, run.workspace, st.Connection)
 		}
 		if err != nil {
 			return e.stepFailed(ctx, tx, run, step, failure("reference_missing", err.Error()))

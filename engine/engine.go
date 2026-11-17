@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
+	"github.com/bobbydeveaux/weir/internal/secrets"
 	"github.com/bobbydeveaux/weir/spec"
 )
 
@@ -42,6 +43,8 @@ type Engine struct {
 	// hub passes news of run events to whoever is streaming. Engines made by
 	// In share it.
 	hub *hub
+	// slug is the workspace's name, as people write it.
+	slug string
 	// workspace is the id of the workspace this engine reads and writes.
 	// Everything a caller can name (workflows, templates, connections, runs,
 	// tasks) is looked up inside it. Work in progress is the exception: a
@@ -64,6 +67,7 @@ type Engine struct {
 // New returns an engine for the default workspace of the database behind pool.
 func New(ctx context.Context, pool *pgxpool.Pool) (*Engine, error) {
 	e := &Engine{pool: pool, hub: &hub{subs: map[chan Moved]struct{}{}}, BackoffBase: 2 * time.Second, MaxAbandoned: 3}
+	e.slug = "default"
 	err := pool.QueryRow(ctx, `SELECT id::text FROM workspaces WHERE slug = 'default'`).Scan(&e.workspace)
 	if err != nil {
 		return nil, fmt.Errorf("find the default workspace (has the schema been migrated?): %w", err)
@@ -86,6 +90,7 @@ type Workspace struct {
 // engine's database and settings.
 func (e *Engine) In(ctx context.Context, slug string) (*Engine, error) {
 	scoped := *e
+	scoped.slug = slug
 	err := e.pool.QueryRow(ctx, `SELECT id::text FROM workspaces WHERE slug = $1`, slug).Scan(&scoped.workspace)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("workspace %s: %w", slug, ErrNotFound)
@@ -189,22 +194,57 @@ func (e *Engine) loadTemplate(ctx context.Context, q querier, workspace, ref str
 	return &t, json.Unmarshal([]byte(raw), &t)
 }
 
-// PutConnection creates or updates a named third party.
-func (e *Engine) PutConnection(ctx context.Context, name, baseURL string) error {
+// Auth says how Weir proves who it is to a connection. It holds a reference
+// to a secret and never the secret.
+type Auth = secrets.Auth
+
+// Endpoint is where a connection is, and how to sign in to it.
+type Endpoint struct {
+	// Connection is the connection's name.
+	Connection string
+	// URL is its base address.
+	URL string
+	// Workspace is the name of the workspace that owns it. A secret is
+	// looked up for that workspace and no other.
+	Workspace string
+	Auth      Auth
+}
+
+// Workspace returns the name of the workspace this engine reads and writes.
+func (e *Engine) Workspace() string { return e.slug }
+
+// PutConnection creates or updates a named third party: its address, and how
+// Weir signs in to it.
+func (e *Engine) PutConnection(ctx context.Context, name, baseURL string, auth Auth) error {
+	if err := auth.Check(); err != nil {
+		return fmt.Errorf("connection %s: %w", name, err)
+	}
+	kind := auth.Kind
+	if kind == "" {
+		kind = secrets.None
+	}
 	_, err := e.pool.Exec(ctx, `
-		INSERT INTO connections (workspace_id, name, base_url) VALUES ($1::uuid, $2, $3)
-		ON CONFLICT (workspace_id, name) DO UPDATE SET base_url = EXCLUDED.base_url, kind = 'http', tools = '[]'::jsonb`, e.workspace, name, baseURL)
+		INSERT INTO connections (workspace_id, name, base_url, auth_kind, secret_ref, auth_header, auth_username)
+		VALUES ($1::uuid, $2, $3, $4, NULLIF($5, ''), NULLIF($6, ''), NULLIF($7, ''))
+		ON CONFLICT (workspace_id, name) DO UPDATE
+		SET base_url = EXCLUDED.base_url, kind = 'http', tools = '[]'::jsonb, auth_kind = EXCLUDED.auth_kind,
+			secret_ref = EXCLUDED.secret_ref, auth_header = EXCLUDED.auth_header, auth_username = EXCLUDED.auth_username`,
+		e.workspace, name, baseURL, kind, auth.Secret, auth.Header, auth.Username)
 	return err
 }
 
-func (e *Engine) connectionURL(ctx context.Context, q querier, workspace, name string) (string, error) {
-	var url string
-	err := q.QueryRow(ctx, `SELECT base_url FROM connections WHERE workspace_id = $1::uuid AND name = $2`,
-		workspace, name).Scan(&url)
+// endpoint finds a connection in a workspace, by the workspace's id.
+func (e *Engine) endpoint(ctx context.Context, q querier, workspace, name string) (Endpoint, error) {
+	ep := Endpoint{Connection: name}
+	err := q.QueryRow(ctx, `
+		SELECT c.base_url, w.slug, c.auth_kind, COALESCE(c.secret_ref, ''), COALESCE(c.auth_header, ''), COALESCE(c.auth_username, '')
+		FROM connections c JOIN workspaces w ON w.id = c.workspace_id
+		WHERE c.workspace_id = $1::uuid AND c.name = $2`, workspace, name).
+		Scan(&ep.URL, &ep.Workspace, &ep.Auth.Kind, &ep.Auth.Secret, &ep.Auth.Header, &ep.Auth.Username)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", fmt.Errorf("connection %q: %w", name, ErrNotFound)
+		return ep, fmt.Errorf("connection %q: %w", name, ErrNotFound)
 	}
-	return url, err
+	return ep, err
 }
 
 // --- publishing ------------------------------------------------------------------
@@ -240,19 +280,19 @@ func (e *Engine) Publish(ctx context.Context, source []byte, by string) (*Publis
 				return nil, fmt.Errorf("step %s: %w", s.ID, err)
 			}
 		case spec.KindExternal:
-			if _, err := e.connectionURL(ctx, e.pool, e.workspace, s.Connection); err != nil {
+			if _, err := e.endpoint(ctx, e.pool, e.workspace, s.Connection); err != nil {
 				return nil, fmt.Errorf("step %s: %w", s.ID, err)
 			}
 		}
 	}
 	for i, h := range def.Hooks {
-		if _, err := e.connectionURL(ctx, e.pool, e.workspace, h.Connection); err != nil {
+		if _, err := e.endpoint(ctx, e.pool, e.workspace, h.Connection); err != nil {
 			return nil, fmt.Errorf("hooks[%d]: %w", i, err)
 		}
 	}
 	for _, s := range def.Steps {
 		for _, f := range s.Files {
-			if _, err := e.connectionURL(ctx, e.pool, e.workspace, f.Connection); err != nil {
+			if _, err := e.endpoint(ctx, e.pool, e.workspace, f.Connection); err != nil {
 				return nil, fmt.Errorf("step %s: files: %w", s.ID, err)
 			}
 		}

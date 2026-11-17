@@ -375,6 +375,9 @@ func (s *server) connection(w http.ResponseWriter, r *http.Request) {
 		Kind string `json:"kind"`
 		// ReadOnly marks every tool of an MCP connection as a read.
 		ReadOnly bool `json:"read_only"`
+		// Auth says how Weir signs in: a kind, and a reference to a secret.
+		// The secret itself is never sent here and never stored.
+		Auth engine.Auth `json:"auth"`
 	}
 	if !decode(w, r, &in) {
 		return
@@ -386,12 +389,17 @@ func (s *server) connection(w http.ResponseWriter, r *http.Request) {
 	if in.Kind == "mcp" {
 		// Ask the server what it offers now, so that a workflow naming a tool
 		// it does not have is refused when it is published.
-		tools, err := worker.DiscoverMCP(r.Context(), in.BaseURL)
+		if err := in.Auth.Check(); err != nil {
+			reply(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		to := engine.Endpoint{Connection: r.PathValue("name"), URL: in.BaseURL, Workspace: s.in(r).Workspace(), Auth: in.Auth}
+		tools, err := worker.DiscoverMCP(r.Context(), s.reg, to)
 		if err != nil {
 			reply(w, http.StatusBadGateway, map[string]string{"error": "the MCP server could not be asked for its tools: " + err.Error()})
 			return
 		}
-		if err := s.in(r).PutMCPConnection(r.Context(), r.PathValue("name"), in.BaseURL, in.ReadOnly, tools); err != nil {
+		if err := s.in(r).PutMCPConnection(r.Context(), r.PathValue("name"), in.BaseURL, in.ReadOnly, in.Auth, tools); err != nil {
 			fail(w, err)
 			return
 		}
@@ -406,11 +414,17 @@ func (s *server) connection(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusBadRequest, map[string]string{"error": "a connection's kind is http or mcp"})
 		return
 	}
-	if err := s.in(r).PutConnection(r.Context(), r.PathValue("name"), in.BaseURL); err != nil {
+	if err := s.in(r).PutConnection(r.Context(), r.PathValue("name"), in.BaseURL, in.Auth); err != nil {
 		fail(w, err)
 		return
 	}
-	reply(w, http.StatusOK, map[string]string{"name": r.PathValue("name")})
+	out := map[string]any{"name": r.PathValue("name")}
+	if in.Auth.Secret != "" {
+		// Say whether the secret is there yet, and where it is read from, so
+		// that whoever runs the server knows what to set. Never the value.
+		out["secret_found"], out["secret_read_from"] = s.reg.SecretStatus(s.in(r).Workspace(), in.Auth.Secret)
+	}
+	reply(w, http.StatusOK, out)
 }
 
 func (s *server) start(w http.ResponseWriter, r *http.Request) {

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/bobbydeveaux/weir/engine"
+	"github.com/bobbydeveaux/weir/internal/secrets"
 	"github.com/bobbydeveaux/weir/runner"
 	"github.com/bobbydeveaux/weir/spec"
 )
@@ -52,11 +53,40 @@ type Registry struct {
 	mu       sync.RWMutex
 	handlers map[string]Handler
 	tools    map[string]Tool
+
+	// Secrets finds the value of a connection's secret when a call is made.
+	// NewRegistry sets it to read this process's environment.
+	Secrets *secrets.Resolver
+}
+
+// SecretStatus reports whether a workspace's secret can be found, and where
+// it is read from. It never returns the value.
+func (r *Registry) SecretStatus(workspace, ref string) (found bool, readFrom string) {
+	resolver := r.Secrets
+	if resolver == nil {
+		resolver = secrets.FromEnv(nil)
+	}
+	readFrom, _ = resolver.Where(workspace, ref)
+	_, err := resolver.Resolve(workspace, ref)
+	return err == nil, readFrom
+}
+
+// sign adds a connection's credential to a request. If the secret cannot be
+// found it returns an error, and the request must not be sent.
+func (r *Registry) sign(req *http.Request, to engine.Endpoint) error {
+	resolver := r.Secrets
+	if resolver == nil {
+		resolver = secrets.FromEnv(nil)
+	}
+	if err := resolver.Apply(req, to.Workspace, to.Auth); err != nil {
+		return fmt.Errorf("connection %s: %w", to.Connection, err)
+	}
+	return nil
 }
 
 // NewRegistry returns a registry with the built-in handlers.
 func NewRegistry() *Registry {
-	r := &Registry{handlers: map[string]Handler{}}
+	r := &Registry{handlers: map[string]Handler{}, Secrets: secrets.FromEnv(nil)}
 	r.Register("core.noop", func(context.Context, Call) (json.RawMessage, error) {
 		return json.RawMessage(`{}`), nil
 	})
@@ -146,7 +176,8 @@ func (w *Worker) defaults() {
 		w.Idle = 250 * time.Millisecond
 	}
 	if w.HTTP == nil {
-		w.HTTP = &http.Client{Timeout: 30 * time.Second}
+		// Calls may carry a credential, so a redirect to another host is not followed.
+		w.HTTP = &http.Client{Timeout: 30 * time.Second, CheckRedirect: secrets.SameHost}
 	}
 	if w.PollEvery == 0 {
 		w.PollEvery = 5 * time.Second
@@ -204,6 +235,9 @@ func (w *Worker) DeliverHooks(ctx context.Context) (int, error) {
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Weir-Hook-Id", d.ID)
 		req.Header.Set("Idempotency-Key", d.ID)
+		if err := w.Handlers.sign(req, d.To); err != nil {
+			return err // not sent; tried again later, once the secret is there
+		}
 		resp, err := w.HTTP.Do(req)
 		if err != nil {
 			return err
@@ -394,9 +428,14 @@ func (w *Worker) external(ctx context.Context, work *engine.Work) error {
 	if method == "" {
 		method = http.MethodPost
 	}
-	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(work.ConnectionURL, "/")+st.Call.Path, bytes.NewReader(work.Input))
+	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(work.Connection.URL, "/")+st.Call.Path, bytes.NewReader(work.Input))
 	if err != nil {
 		return w.Engine.Fail(ctx, work.Token, engine.Failure{Type: "call_invalid", Message: err.Error(), Actor: w.ID})
+	}
+	// Without its credential the call is not made at all. Trying again will
+	// not help until someone sets the secret, so the run stops for a person.
+	if err := w.Handlers.sign(req, work.Connection); err != nil {
+		return w.Engine.Fail(ctx, work.Token, engine.Failure{Type: "secret_unavailable", Message: err.Error(), Actor: w.ID})
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Idempotency-Key", work.IdempotencyKey)
@@ -449,12 +488,15 @@ const maxFile = 20 << 20
 func (w *Worker) fetch(ctx context.Context, work *engine.Work, ref spec.FileRef) (runner.File, error) {
 	fill := filler(work.Input)
 	name, path := fill(ref.Name), fill(ref.Path)
-	base, err := w.Engine.ConnectionURL(ctx, work.RunID, ref.Connection)
+	to, err := w.Engine.Endpoint(ctx, work.RunID, ref.Connection)
 	if err != nil {
 		return runner.File{}, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(base, "/")+path, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(to.URL, "/")+path, nil)
 	if err != nil {
+		return runner.File{}, err
+	}
+	if err := w.Handlers.sign(req, to); err != nil {
 		return runner.File{}, err
 	}
 	client := w.HTTP
