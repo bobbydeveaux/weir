@@ -72,6 +72,10 @@ type Registry struct {
 	workspaces map[string]Preparer
 	github     githubTokens
 
+	// GitRemote says where git clones a repository from, given the API's
+	// address. Nil means GitHub's own layout.
+	GitRemote func(api, repo string) (string, error)
+
 	// Secrets finds the value of a connection's secret when a call is made.
 	// NewRegistry sets it to read this process's environment.
 	Secrets *secrets.Resolver

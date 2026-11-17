@@ -340,7 +340,51 @@ One handler ships with Weir, `github.checkout`. It clones one repository into th
 - Every `.gitignore` in the repository, at any depth, decides what is left out of the agent's changes.
 - The worker needs `git` installed.
 
-Proven against the real GitHub: a private repository was cloned as a GitHub App, and the token was nowhere in the directory. The handler's reading of a step's input and settings is not yet covered by a test.
+Proven against the real GitHub: a private repository was cloned as a GitHub App, and the token was nowhere in the directory.
+
+### Committing what an agent changed
+
+`github.commit` is a deterministic handler. It turns the files a step changed into a branch and a pull request, and it is the only thing that ever holds a token that can write.
+
+```yaml
+- id: fix
+  kind: ai
+  prompt: fix-dependency@2
+  input: { repo: input.repo }
+  workspace: { handler: github.checkout }
+  output: { schema: { type: object } }
+  budget: { usd: 5 }
+
+- id: propose
+  kind: deterministic
+  handler: github.commit
+  input:
+    repo: input.repo
+    from: '"fix"'                          # the step whose files to commit
+    branch: '"weir/fix-" + run.id'
+    title: '"Fix the vulnerable dependency"'
+    body: steps.fix.output.summary
+```
+
+| Input | Meaning |
+|---|---|
+| `from` | The step whose files to commit |
+| `branch` | The new branch to push |
+| `title`, `body` | The pull request's title and description |
+| `repo` | The repository, as `owner/name`. Not needed if the connection is for one repository |
+| `base` | The branch to start from and merge into. The default branch if left out |
+| `message` | The commit's message. The title if left out |
+| `author` | `name` and `email` for the commit. `weir` if left out |
+| `connection` | The connection to use. `github` if left out |
+
+- It clones the repository afresh. Nothing from the directory the agent worked in is used, so nothing an agent left behind can run.
+- The token that can write is asked for only at this point, after the agent has exited, for this one repository.
+- It will not write to the base branch, into a `.git` directory, or through a link that leads out of the repository.
+- Running it twice is safe: a branch that is already there is not pushed again, and a pull request that is already open is returned.
+- If the files make no difference, it says so and opens nothing.
+- Its output holds the branch, the commit and the pull request's number and address.
+
+Tested end to end against a repository on disk and a stand-in for GitHub's API: checkout, an agent's changes, a commit, a pushed branch and a pull request. It has not yet pushed to the real GitHub. Whether a file is executable is not carried over.
 
 ### Paths an agent may not change
 
