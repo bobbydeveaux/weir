@@ -80,6 +80,23 @@ func githubFor(ctx context.Context, reg *Registry, eng *engine.Engine, client *h
 	return g, nil
 }
 
+// githubNeeds says what a call to a repository needs permission for. Pull
+// requests and their comments are one permission; everything else under a
+// repository is its contents.
+func githubNeeds(method, path string) map[string]string {
+	pulls := strings.HasPrefix(path, "/pulls") || strings.HasPrefix(path, "/issues")
+	read := method == http.MethodGet || method == http.MethodHead
+	switch {
+	case pulls && read:
+		return GitHubReadPulls
+	case pulls:
+		return GitHubWritePulls
+	case read:
+		return GitHubRead
+	}
+	return GitHubWrite
+}
+
 // do calls the API. out, when not nil, receives the decoded reply. It returns
 // the status code, and an error for anything that is not a success.
 func (g *github) do(ctx context.Context, method, path string, body, out any) (int, error) {
@@ -101,7 +118,14 @@ func (g *github) do(ctx context.Context, method, path string, body, out any) (in
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if err := g.reg.sign(req, g.to); err != nil {
+	if g.to.Auth.Kind == secrets.GitHubApp {
+		// A token for this one repository, with the least this call needs.
+		token, err := g.reg.GitHubToken(ctx, g.client, g.to, g.repo, githubNeeds(method, path))
+		if err != nil {
+			return 0, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+	} else if err := g.reg.sign(req, g.to); err != nil {
 		return 0, err
 	}
 	resp, err := g.client.Do(req)

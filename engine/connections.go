@@ -42,6 +42,9 @@ func (e *Engine) PutMCPConnection(ctx context.Context, name, url string, readOnl
 	if err := auth.Check(); err != nil {
 		return fmt.Errorf("connection %s: %w", name, err)
 	}
+	if auth.Kind == secrets.GitHubApp {
+		return fmt.Errorf("connection %s: an MCP server cannot be signed in to as a GitHub App", name)
+	}
 	kind := auth.Kind
 	if kind == "" {
 		kind = secrets.None
@@ -70,7 +73,7 @@ func (e *Engine) PutMCPConnection(ctx context.Context, name, url string, readOnl
 		ON CONFLICT (workspace_id, name) DO UPDATE
 		SET base_url = EXCLUDED.base_url, kind = 'mcp', read_only = EXCLUDED.read_only, tools = EXCLUDED.tools, synced_at = now(),
 			auth_kind = EXCLUDED.auth_kind, secret_ref = EXCLUDED.secret_ref, auth_header = EXCLUDED.auth_header,
-			auth_username = EXCLUDED.auth_username`,
+			auth_username = EXCLUDED.auth_username, auth_app = NULL`,
 		e.workspace, name, url, readOnly, string(raw), kind, auth.Secret, auth.Header, auth.Username)
 	return err
 }
