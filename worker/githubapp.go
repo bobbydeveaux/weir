@@ -34,7 +34,9 @@ var (
 	// GitHubWrite is enough to push a branch.
 	GitHubWrite = map[string]string{"contents": "write", "metadata": "read"}
 	// GitHubWritePulls is enough to open a pull request or comment on one.
-	GitHubWritePulls = map[string]string{"pull_requests": "write", "metadata": "read"}
+	// Opening one needs to read the branches it joins, or GitHub refuses with
+	// "not all refs are readable".
+	GitHubWritePulls = map[string]string{"pull_requests": "write", "contents": "read", "metadata": "read"}
 	// GitHubCommit is enough to push a branch and open its pull request.
 	GitHubCommit = map[string]string{"contents": "write", "pull_requests": "write", "metadata": "read"}
 )
