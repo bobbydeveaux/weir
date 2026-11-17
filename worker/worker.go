@@ -38,6 +38,20 @@ type Call struct {
 	Step           string
 }
 
+// Workspace is a request to prepare the directory an agent will work in.
+type Workspace struct {
+	Call
+	// Dir is the directory to fill. It is new and empty.
+	Dir string
+	// With holds the fixed settings the step gave.
+	With map[string]any
+}
+
+// Preparer is registered code that fills an agent's working directory. It
+// runs on the worker, outside the agent's sandbox, immediately before the
+// agent starts.
+type Preparer func(ctx context.Context, w Workspace) (runner.Prepared, error)
+
 // Handler is a piece of registered code that a deterministic step runs.
 type Handler func(ctx context.Context, call Call) (json.RawMessage, error)
 
@@ -52,9 +66,10 @@ func Permanent(err error) error { return permanent{err} }
 
 // Registry holds the handlers a worker can run.
 type Registry struct {
-	mu       sync.RWMutex
-	handlers map[string]Handler
-	tools    map[string]Tool
+	mu         sync.RWMutex
+	handlers   map[string]Handler
+	tools      map[string]Tool
+	workspaces map[string]Preparer
 
 	// Secrets finds the value of a connection's secret when a call is made.
 	// NewRegistry sets it to read this process's environment.
@@ -114,6 +129,29 @@ func (r *Registry) Register(name string, h Handler) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.handlers[name] = h
+}
+
+// RegisterWorkspace adds a way of preparing a working directory, under name.
+func (r *Registry) RegisterWorkspace(name string, p Preparer) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.workspaces == nil {
+		r.workspaces = map[string]Preparer{}
+	}
+	r.workspaces[name] = p
+}
+
+// WorkspaceExists reports whether a way of preparing a working directory is registered.
+func (r *Registry) WorkspaceExists(name string) bool {
+	_, ok := r.workspace(name)
+	return ok
+}
+
+func (r *Registry) workspace(name string) (Preparer, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	p, ok := r.workspaces[name]
+	return p, ok
 }
 
 // HandlerNames lists the registered handlers, in order.
@@ -420,7 +458,19 @@ func (w *Worker) ai(ctx context.Context, work *engine.Work) error {
 	if st.Shell != nil {
 		req.Shell = &runner.Shell{Hosts: st.Shell.Hosts}
 	}
-	if st.Writes != nil {
+	if ws := st.Workspace; ws != nil {
+		prepare, ok := w.Handlers.workspace(ws.Handler)
+		if !ok {
+			return w.Engine.Fail(context.WithoutCancel(ctx), work.Token, engine.Failure{Type: "workspace_unavailable",
+				Message: fmt.Sprintf("nothing is registered on this worker to prepare a directory as %q", ws.Handler), Actor: w.ID})
+		}
+		call := Call{Input: work.Input, IdempotencyKey: work.IdempotencyKey, RunID: work.RunID, Step: st.ID}
+		req.Workspace = &runner.Workspace{Prepare: func(ctx context.Context, dir string) (runner.Prepared, error) {
+			return prepare(ctx, Workspace{Call: call, Dir: dir, With: ws.With})
+		}}
+	}
+	if st.Writes != nil || st.Workspace != nil {
+		// A step with a workspace always has limits on what it may change.
 		limit := runner.WriteLimit{}
 		limit.MaxFiles, limit.MaxBytes = st.Writes.Limits()
 		req.Writes = &limit
@@ -449,7 +499,7 @@ func (w *Worker) ai(ctx context.Context, work *engine.Work) error {
 	// part of completing it. If the step does not complete, it is dropped.
 	produced := make([]engine.NewFile, 0, len(res.Files))
 	for _, f := range res.Files {
-		produced = append(produced, engine.NewFile{Path: f.Name, Data: f.Data})
+		produced = append(produced, engine.NewFile{Path: f.Name, Data: f.Data, Deleted: f.Deleted})
 	}
 	kept, err := w.Engine.KeepFiles(done, work.RunID, produced)
 	if err != nil {
@@ -476,7 +526,9 @@ func (w *Worker) files(ctx context.Context, work *engine.Work, ref spec.FileRef)
 	}
 	out := make([]runner.File, 0, len(produced))
 	for _, f := range produced {
-		out = append(out, runner.File{Name: f.Path, Data: f.Data})
+		if !f.Deleted { // a later agent is given what exists, not what was removed
+			out = append(out, runner.File{Name: f.Path, Data: f.Data})
+		}
 	}
 	return out, nil
 }

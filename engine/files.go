@@ -24,6 +24,8 @@ type NewFile struct {
 	// Path is where the step wrote it, relative to the step's own directory.
 	Path string
 	Data []byte
+	// Deleted says the step removed this file from the directory it was given.
+	Deleted bool
 }
 
 // FileRecord says where a kept file is and what it holds.
@@ -32,6 +34,8 @@ type FileRecord struct {
 	Size        int64  `json:"size"`
 	SHA256      string `json:"sha256"`
 	ContentType string `json:"content_type"`
+	// Deleted says the step removed this file. A deleted file has no contents.
+	Deleted bool `json:"deleted,omitempty"`
 	// Key is the file's key in the file store. It is never shown to a caller.
 	Key string `json:"-"`
 }
@@ -53,6 +57,10 @@ func (e *Engine) KeepFiles(ctx context.Context, runID string, files []NewFile) (
 	}
 	var kept []FileRecord
 	for _, f := range files {
+		if f.Deleted {
+			kept = append(kept, FileRecord{Path: f.Path, Deleted: true})
+			continue
+		}
 		id := make([]byte, 16)
 		if _, err := rand.Read(id); err != nil {
 			e.DropFiles(ctx, kept)
@@ -80,7 +88,9 @@ func (e *Engine) DropFiles(ctx context.Context, files []FileRecord) {
 		return
 	}
 	for _, f := range files {
-		_ = e.Files.Delete(context.WithoutCancel(ctx), f.Key)
+		if f.Key != "" {
+			_ = e.Files.Delete(context.WithoutCancel(ctx), f.Key)
+		}
 	}
 }
 
@@ -98,9 +108,9 @@ func contentType(name string, data []byte) string {
 func (e *Engine) recordFiles(ctx context.Context, tx pgx.Tx, runID, stepID string, files []FileRecord) error {
 	for _, f := range files {
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO run_files (workspace_id, run_id, step_id, path, size, sha256, content_type, blob_key)
-			SELECT r.workspace_id, r.id, $2::uuid, $3, $4, $5, $6, $7 FROM runs r WHERE r.id = $1::uuid`,
-			runID, stepID, f.Path, f.Size, f.SHA256, f.ContentType, f.Key); err != nil {
+			INSERT INTO run_files (workspace_id, run_id, step_id, path, size, sha256, content_type, blob_key, deleted)
+			SELECT r.workspace_id, r.id, $2::uuid, $3, $4, $5, $6, $7, $8 FROM runs r WHERE r.id = $1::uuid`,
+			runID, stepID, f.Path, f.Size, f.SHA256, f.ContentType, f.Key, f.Deleted); err != nil {
 			return fmt.Errorf("record file %s: %w", f.Path, err)
 		}
 	}
@@ -110,7 +120,7 @@ func (e *Engine) recordFiles(ctx context.Context, tx pgx.Tx, runID, stepID strin
 // latestFiles is the files of each step's most recent visit. A step that ran
 // again and wrote nothing has no files, whatever an earlier visit wrote.
 const latestFiles = `
-	SELECT s.step_key AS step, f.path, f.size, f.sha256, f.content_type, f.blob_key, f.created_at
+	SELECT s.step_key AS step, f.path, f.size, f.sha256, f.content_type, f.blob_key, f.created_at, f.deleted
 	FROM run_files f JOIN steps s ON s.id = f.step_id
 	WHERE f.run_id = $1::uuid AND s.compensates IS NULL
 		AND s.visit = (SELECT max(x.visit) FROM steps x WHERE x.run_id = s.run_id AND x.step_key = s.step_key AND x.compensates IS NULL)`
@@ -122,7 +132,7 @@ func (e *Engine) RunFiles(ctx context.Context, runID string) (json.RawMessage, e
 		runID, e.workspace).Scan(&found); err != nil || !found {
 		return nil, fmt.Errorf("run %s: %w", runID, ErrNotFound)
 	}
-	return e.list(ctx, `SELECT q.step, q.path, q.size, q.sha256, q.content_type, q.created_at FROM (`+latestFiles+`) q
+	return e.list(ctx, `SELECT q.step, q.path, q.size, q.sha256, q.content_type, q.deleted, q.created_at FROM (`+latestFiles+`) q
 		ORDER BY q.created_at, q.step, q.path`, runID)
 }
 
@@ -133,7 +143,7 @@ func (e *Engine) OpenFile(ctx context.Context, runID, step, filePath string) (io
 	err := e.pool.QueryRow(ctx, `
 		SELECT q.path, q.size, q.sha256, q.content_type, q.blob_key FROM (`+latestFiles+`) q
 		JOIN runs r ON r.id = $1::uuid AND r.workspace_id = $4::uuid
-		WHERE q.step = $2 AND q.path = $3`, runID, step, filePath, e.workspace).
+		WHERE q.step = $2 AND q.path = $3 AND NOT q.deleted`, runID, step, filePath, e.workspace).
 		Scan(&rec.Path, &rec.Size, &rec.SHA256, &rec.ContentType, &rec.Key)
 	if err != nil {
 		return nil, rec, fmt.Errorf("file %s of step %s: %w", filePath, step, ErrNotFound)
@@ -148,14 +158,17 @@ func (e *Engine) OpenFile(ctx context.Context, runID, step, filePath string) (io
 // StepFiles reads every file a step of a run produced, for a later step of
 // the same run. It is for the worker, which serves every workspace.
 func (e *Engine) StepFiles(ctx context.Context, runID, step string) ([]NewFile, error) {
-	rows, err := e.pool.Query(ctx, `SELECT q.path, q.blob_key FROM (`+latestFiles+`) q WHERE q.step = $2 ORDER BY q.path`, runID, step)
+	rows, err := e.pool.Query(ctx, `SELECT q.path, q.blob_key, q.deleted FROM (`+latestFiles+`) q WHERE q.step = $2 ORDER BY q.path`, runID, step)
 	if err != nil {
 		return nil, err
 	}
-	type entry struct{ path, key string }
+	type entry struct {
+		path, key string
+		deleted   bool
+	}
 	list, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (entry, error) {
 		var en entry
-		return en, row.Scan(&en.path, &en.key)
+		return en, row.Scan(&en.path, &en.key, &en.deleted)
 	})
 	if err != nil || len(list) == 0 {
 		return nil, err
@@ -165,6 +178,10 @@ func (e *Engine) StepFiles(ctx context.Context, runID, step string) ([]NewFile, 
 	}
 	var out []NewFile
 	for _, en := range list {
+		if en.deleted {
+			out = append(out, NewFile{Path: en.path, Deleted: true})
+			continue
+		}
 		body, err := e.Files.Get(ctx, en.key)
 		if err != nil {
 			return nil, fmt.Errorf("read %s: %w", en.path, err)
@@ -182,7 +199,7 @@ func (e *Engine) StepFiles(ctx context.Context, runID, step string) ([]NewFile, 
 // filesByStep is what expressions see of a run's files: for each step, a
 // list of path, size, sha256 and content_type.
 func (e *Engine) filesByStep(ctx context.Context, tx pgx.Tx, runID string) (map[string][]any, error) {
-	rows, err := tx.Query(ctx, `SELECT q.step, q.path, q.size, q.sha256, q.content_type FROM (`+latestFiles+`) q ORDER BY q.step, q.path`, runID)
+	rows, err := tx.Query(ctx, `SELECT q.step, q.path, q.size, q.sha256, q.content_type, q.deleted FROM (`+latestFiles+`) q ORDER BY q.step, q.path`, runID)
 	if err != nil {
 		return nil, err
 	}
@@ -191,10 +208,11 @@ func (e *Engine) filesByStep(ctx context.Context, tx pgx.Tx, runID string) (map[
 	for rows.Next() {
 		var step, p, sum, kind string
 		var size int64
-		if err := rows.Scan(&step, &p, &size, &sum, &kind); err != nil {
+		var deleted bool
+		if err := rows.Scan(&step, &p, &size, &sum, &kind, &deleted); err != nil {
 			return nil, err
 		}
-		out[step] = append(out[step], map[string]any{"path": p, "size": float64(size), "sha256": sum, "content_type": kind})
+		out[step] = append(out[step], map[string]any{"path": p, "size": float64(size), "sha256": sum, "content_type": kind, "deleted": deleted})
 	}
 	return out, rows.Err()
 }

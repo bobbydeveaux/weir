@@ -58,6 +58,9 @@ type Engine struct {
 	// HandlerExists, when set, lets Publish refuse a definition that names an
 	// unregistered deterministic handler.
 	HandlerExists func(name string) bool
+	// WorkspaceExists, when set, lets Publish refuse a definition that names
+	// a way of preparing a working directory that is not registered.
+	WorkspaceExists func(name string) bool
 	// ToolClass, when set, reports whether a tool exists and whether it is a
 	// read or a write. Publish uses it to check the tools an ai step lists.
 	ToolClass func(name string) (class string, ok bool)
@@ -273,7 +276,7 @@ func (e *Engine) Publish(ctx context.Context, source []byte, by string) (*Publis
 	if err != nil {
 		return nil, err
 	}
-	if err := def.Validate(spec.ValidateOptions{HandlerExists: e.HandlerExists}); err != nil {
+	if err := def.Validate(spec.ValidateOptions{HandlerExists: e.HandlerExists, WorkspaceExists: e.WorkspaceExists}); err != nil {
 		return nil, err
 	}
 	// Every reference must resolve now, so that a run cannot fail later for a missing one.

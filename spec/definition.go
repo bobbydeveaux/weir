@@ -105,8 +105,10 @@ type Step struct {
 	// and for the application.
 	Writes *Writes `yaml:"writes,omitempty" json:"writes,omitempty"`
 	// Shell gives the agent a sandboxed shell.
-	Shell  *Shell  `yaml:"shell,omitempty" json:"shell,omitempty"`
-	Budget *Budget `yaml:"budget,omitempty" json:"budget,omitempty"`
+	Shell *Shell `yaml:"shell,omitempty" json:"shell,omitempty"`
+	// Workspace prepares the agent's working directory before it runs.
+	Workspace *Workspace `yaml:"workspace,omitempty" json:"workspace,omitempty"`
+	Budget    *Budget    `yaml:"budget,omitempty" json:"budget,omitempty"`
 
 	// deterministic
 	Handler string `yaml:"handler,omitempty" json:"handler,omitempty"`
@@ -190,6 +192,9 @@ type ValidateOptions struct {
 	// HandlerExists reports whether a deterministic handler is registered.
 	// When nil, handler names are not checked.
 	HandlerExists func(name string) bool
+	// WorkspaceExists reports whether a way of preparing a working directory
+	// is registered.
+	WorkspaceExists func(name string) bool
 }
 
 var (
@@ -292,7 +297,7 @@ func (d *Definition) Validate(opts ValidateOptions) error {
 		case KindDecide:
 			validateDecide(s, at, add)
 		case KindAI:
-			validateAI(s, at, add)
+			validateAI(s, at, opts, add)
 		case KindDeterministic:
 			validateDeterministic(s, at, opts, add)
 		case KindHuman:
@@ -379,7 +384,7 @@ func validateDecide(s *Step, at string, add func(string, ...any)) {
 	forbid(s, at, add, "decide", fieldsExcept("template", "labels", "confidence", "default", "tier", "provider", "describe"))
 }
 
-func validateAI(s *Step, at string, add func(string, ...any)) {
+func validateAI(s *Step, at string, opts ValidateOptions, add func(string, ...any)) {
 	if !refPattern.MatchString(s.Prompt) {
 		add("%s: prompt must name a pinned version, such as fix-incident@7", at)
 	}
@@ -419,7 +424,18 @@ func validateAI(s *Step, at string, add func(string, ...any)) {
 			}
 		}
 	}
-	forbid(s, at, add, "ai", fieldsExcept("prompt", "tier", "tools", "budget", "files", "writes", "shell"))
+	if w := s.Workspace; w != nil {
+		switch {
+		case !handlerPattern.MatchString(w.Handler):
+			add("%s: workspace.handler must name what prepares the directory, such as github.checkout", at)
+		case opts.WorkspaceExists != nil && !opts.WorkspaceExists(w.Handler):
+			add("%s: workspace.handler %q is not registered", at, w.Handler)
+		}
+		if len(s.Files) > 0 {
+			add("%s: a step with a workspace cannot also list files; what it needs must be in the directory it is given", at)
+		}
+	}
+	forbid(s, at, add, "ai", fieldsExcept("prompt", "tier", "tools", "budget", "files", "writes", "shell", "workspace"))
 }
 
 func validateDeterministic(s *Step, at string, opts ValidateOptions, add func(string, ...any)) {
@@ -541,6 +557,20 @@ type Trigger struct {
 
 var eventPattern = regexp.MustCompile(`^[a-z][a-z0-9]*([._-][a-z0-9]+)*$`)
 
+// Workspace says how an agent's working directory is prepared before it
+// runs. The agent may change anything in the directory, and the files it
+// added, changed or deleted are kept as the step's files, within the limits
+// in writes.
+type Workspace struct {
+	// Handler names the registered code that fills the directory. It is given
+	// the step's input and With.
+	Handler string `yaml:"handler" json:"handler"`
+	// With holds fixed settings for the handler, such as which connection to use.
+	With map[string]any `yaml:"with,omitempty" json:"with,omitempty"`
+}
+
+var handlerPattern = regexp.MustCompile(`^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$`)
+
 // Shell gives an agent a shell. It runs in a sandbox: it can write only in
 // the step's working directory, and reach only the hosts listed.
 type Shell struct {
@@ -616,6 +646,7 @@ func kindFields(s *Step) map[string]bool {
 		"files":      len(s.Files) > 0,
 		"writes":     s.Writes != nil,
 		"shell":      s.Shell != nil,
+		"workspace":  s.Workspace != nil,
 		"budget":     s.Budget != nil,
 		"handler":    s.Handler != "",
 		"assign":     s.Assign != nil,

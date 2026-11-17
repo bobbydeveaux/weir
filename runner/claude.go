@@ -83,17 +83,38 @@ func (c *Claude) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 			return RunResult{}, err
 		}
 	}
-	if len(req.Files) > 0 || req.Writes != nil || req.Shell != nil {
-		if dir, err = fileDir(req.Files, req.Writes != nil); err != nil {
+	var before *tree
+	if req.Workspace != nil && len(req.Files) > 0 {
+		return RunResult{}, errors.New("a step that works in a prepared directory cannot also be given files")
+	}
+	if len(req.Files) > 0 || req.Writes != nil || req.Shell != nil || req.Workspace != nil {
+		// A prepared directory is the agent's to change as a whole, so it has
+		// no separate directory to write to.
+		if dir, err = fileDir(req.Files, req.Writes != nil && req.Workspace == nil); err != nil {
 			return RunResult{}, err
 		}
 		defer os.RemoveAll(dir)
+		if req.Workspace != nil {
+			prepared, err := req.Workspace.Prepare(ctx, dir)
+			if err != nil {
+				return RunResult{}, fmt.Errorf("prepare the working directory: %w", err)
+			}
+			// What is there now is recorded before the agent starts, with
+			// what to leave out, so nothing the agent does can change either.
+			if before, err = snapshot(dir, prepared.Ignore); err != nil {
+				return RunResult{}, fmt.Errorf("read the prepared directory: %w", err)
+			}
+		}
 		builtin = "Read"
 		if len(extra) == 0 {
 			extra = append(extra, "--allowedTools")
 		}
 		extra = append(extra, "Read(/"+dir+"/**)")
-		if req.Writes != nil {
+		if req.Workspace != nil {
+			builtin = "Read,Write,Edit"
+			extra = append(extra, "Edit(/"+dir+"/**)")
+			system = strings.TrimSpace(system + fmt.Sprintf("\n\nYour working directory (%s) holds the files to work on. Change them in place: every file you add, change or delete there is kept, and nothing outside it can be changed.", dir))
+		} else if req.Writes != nil {
 			builtin = "Read,Write,Edit"
 			out := filepath.Join(dir, outDir)
 			// An Edit rule covers every tool that changes a file; the
@@ -116,7 +137,16 @@ func (c *Claude) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	if err != nil {
 		return res, err
 	}
-	if req.Writes != nil {
+	switch {
+	case before != nil:
+		limit := WriteLimit{}
+		if req.Writes != nil {
+			limit = *req.Writes
+		}
+		if res.Files, err = before.changes(dir, limit); err != nil {
+			return res, err
+		}
+	case req.Writes != nil:
 		if res.Files, err = collect(filepath.Join(dir, outDir), *req.Writes); err != nil {
 			return res, err
 		}

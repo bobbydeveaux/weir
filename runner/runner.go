@@ -76,6 +76,10 @@ type RunRequest struct {
 	Writes *WriteLimit
 	// Shell, when set, gives the agent a sandboxed shell.
 	Shell *Shell
+	// Workspace, when set, prepares the agent's working directory before it
+	// runs. The agent may change anything in it, and the result's files are
+	// what it changed, within the limits in Writes.
+	Workspace *Workspace
 }
 
 // Shell says what an agent's shell may reach.
@@ -96,6 +100,8 @@ type File struct {
 	// A file fetched for an agent has a plain name with no directory.
 	Name string
 	Data []byte
+	// Deleted says the agent removed this file from a prepared directory.
+	Deleted bool
 }
 
 // Tool describes one tool an agent may call.
