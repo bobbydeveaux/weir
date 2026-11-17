@@ -14,10 +14,10 @@ Open an issue describing what you want to change before writing much code. The c
 
 ## Making a change
 
-1. Find or open the issue for your change. Fork the repository and create a branch named after it: `feature/issue-17-short-name`.
+1. Find or open the issue for your change. Fork the repository and create a branch named after it: `feature/issue-0-short-name`.
 2. Run `make check`. It must pass: formatting, `go vet`, and every test against Postgres.
 3. Add tests for what you change. Tests for the store run against a real Postgres, not a fake.
-4. Start every commit subject and the pull request title with the issue number, `#17: Add …`, and put `Closes #17` in the description. CI checks this.
+4. Start every commit subject and the pull request title with the issue number, `#0: Add …`, and put `Closes #0` in the description. CI checks this.
 5. Open a pull request that says what changed and why.
 
 ## What we look for

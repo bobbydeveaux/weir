@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Checks that a pull request is named after the issue it closes:
 #
-#   branch   feature/issue-17-credentials        (or fix/, docs/, chore/)
-#   commits  #17: Add credentials on a connection
-#   title    #17: Add credentials on a connection
-#   body     Closes #17
+#   branch   feature/issue-0-credentials        (or fix/, docs/, chore/)
+#   commits  #0: Add credentials on a connection
+#   title    #0: Add credentials on a connection
+#   body     Closes #0
 #
 # Usage: check-naming.sh <branch> <title> <body-file> <base-ref>
 # Prints every problem it finds and exits 1 if there is one.
@@ -17,7 +17,7 @@ if [[ $branch =~ ^(feature|fix|docs|chore)/issue-([0-9]+)-[a-z0-9]+(-[a-z0-9]+)*
   issue=${BASH_REMATCH[2]}
   echo "✓ branch $branch is for issue #$issue"
 else
-  fail "branch \"$branch\" must look like feature/issue-17-short-name (feature, fix, docs or chore; lower case, digits and hyphens)"
+  fail "branch \"$branch\" must look like feature/issue-0-short-name (feature, fix, docs or chore; lower case, digits and hyphens)"
   echo "Nothing else can be checked without the issue number."
   exit 1
 fi
