@@ -1,0 +1,65 @@
+---
+name: weir-commit
+description: Name a branch, write a commit message, or open a pull request in the Weir repository so that each is tied to its GitHub issue. Use whenever creating a branch, committing, amending, or opening or retitling a pull request here, and when the "Naming" check fails in CI. Every commit and pull request must start with the issue number, such as "#17: Add credentials on a connection".
+---
+
+# Naming a change after its issue
+
+Every change in this repository closes one issue, and says so in four places. CI checks all four and refuses a pull request that gets one wrong.
+
+| Where | Form | Example |
+|---|---|---|
+| Branch | `<kind>/issue-<number>-<short-name>` | `feature/issue-17-credentials` |
+| Every commit subject | `#<number>: <what changed>` | `#17: Add credentials on a connection` |
+| Pull request title | the same form | `#17: Add credentials on a connection` |
+| Pull request description | `Closes #<number>` on a line of its own | `Closes #17` |
+
+`<kind>` is one of `feature`, `fix`, `docs` or `chore`. The short name is lower-case words joined by hyphens.
+
+## Before anything else: find the issue
+
+- The number is at the end of the item's line in `docs/build/02-epics.md`, such as `(#17)`.
+- If the work has no issue, open one first (`gh issue create`, with its `epic:NN-…` label) and add the number to the line in the list. There is no change without an issue, however small.
+- One issue per pull request. If the work covers two, split it.
+
+## The branch
+
+```sh
+git switch main && git pull
+git switch -c feature/issue-17-credentials
+```
+
+## The commit
+
+Write the message with `-m` or `-F`, never in an editor:
+
+```sh
+git commit -m "#17: Add credentials on a connection" -m "Why, and anything a reader needs to know."
+```
+
+**Why not an editor:** git treats a line that starts with `#` as a comment and deletes it when a message is edited by hand, so the subject would vanish. `-m` and `-F` keep it. The same applies to `git commit --amend`: pass `-m` again. If you must use an editor, run `git config core.commentChar ";"` in this repository first.
+
+After the number, the subject is a short sentence in the imperative, starting with a capital: "Add", "Fix", "Remove". The body says why. Do not add attribution or session links.
+
+## The pull request
+
+```sh
+gh pr create --title "#17: Add credentials on a connection" --body "$(cat <<'BODY'
+## What changed, and why
+…
+
+Closes #17
+BODY
+)"
+```
+
+Fill in the rest of the template. Pull requests are squashed when merged, so the title becomes the commit on `main`: make it read well on its own.
+
+## When the Naming check fails
+
+The check prints each thing that is wrong. To fix:
+
+- **Title or description:** `gh pr edit <number> --title "#17: …"` or `--body`. The check runs again by itself.
+- **The last commit:** `git commit --amend -m "#17: …"`, then `git push --force-with-lease`.
+- **An older commit:** `git rebase -i main` and reword it, with `core.commentChar` set as above, then `git push --force-with-lease`.
+- **The branch name:** `git branch -m feature/issue-17-credentials`, push it, and open a new pull request from it. A pull request's branch cannot be renamed in place.

@@ -1,0 +1,30 @@
+name: Naming
+
+# A pull request must be named after the issue it closes. The rules are in
+# CLAUDE.md, and the check is .github/scripts/check-naming.sh.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  naming:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Branch, commits, title and description name the issue
+        env:
+          # Passed through the environment, never pasted into the script, so
+          # that a title or branch name cannot be run as a command.
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+          TITLE: ${{ github.event.pull_request.title }}
+          BODY: ${{ github.event.pull_request.body }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          printf '%s' "$BODY" > "$RUNNER_TEMP/body.txt"
+          .github/scripts/check-naming.sh "$BRANCH" "$TITLE" "$RUNNER_TEMP/body.txt" "$BASE"

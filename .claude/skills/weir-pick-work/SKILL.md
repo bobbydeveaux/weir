@@ -9,7 +9,7 @@ description: Choose one item from Weir's to-do list and set up to work on it wit
 2. Choose one unticked item from `docs/build/02-epics.md`. Prefer, in order: something the person asked for; something that unblocks other items; something small enough to finish in one sitting.
 3. Check nobody has it: `gh issue list --search "<a few words from the item>"` and `gh pr list`.
 4. Claim it. Each open item ends with its issue number, such as `(#17)`: comment there that you are starting. If an item has no number, open an issue titled with the item's own words, label it with its epic (`epic:NN-…`), and add the number to the line.
-5. Branch from an up-to-date `main`: `git switch -c <epic-number>-<short-name>`.
+5. Branch from an up-to-date `main`, named after the issue: `git switch -c feature/issue-17-credentials` (or `fix/`, `docs/`, `chore/`). The `weir-commit` skill has the naming rules.
 6. Read the code you are about to change, and the section of `docs/spec/weir-spec.md` or `docs/build/` that covers it, before writing anything.
 
 ## Before you write code
