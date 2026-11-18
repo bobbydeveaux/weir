@@ -490,6 +490,8 @@ func validateExternal(s *Step, at string, add func(string, ...any)) {
 		add("%s: an external step must declare the call to make", at)
 	} else if err := checkMapping(s.Call.Body); err != nil {
 		add("%s: call.body: %v", at, err)
+	} else if s.Call.Body != nil && s.Input != nil {
+		add("%s: what is sent is said twice, as input and as call.body; keep one", at)
 	}
 	switch s.Resume {
 	case "callback":
