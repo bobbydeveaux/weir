@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "weir.name" . }}
+  labels: {{- include "weir.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels: {{- include "weir.selector" . | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "weir.selector" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "weir.name" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: weir
+          image: {{ include "weir.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["serve"]
+          ports:
+            - name: http
+              containerPort: 8080
+          {{- include "weir.env" . | nindent 10 }}
+            - name: WEIR_HTTP_ADDR
+              value: ":8080"
+            - name: WEIR_AGENT_RUNNER
+              value: {{ .Values.agents.runner | quote }}
+            {{- if eq .Values.agents.runner "kubernetes" }}
+            - name: WEIR_AGENT_IMAGE
+              value: "{{ .Values.agents.image.repository }}:{{ .Values.agents.image.tag | default .Chart.AppVersion }}"
+            # An agent's pod reaches Weir by its service, inside the cluster.
+            - name: WEIR_AGENT_URL
+              value: "http://{{ include "weir.name" . }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}"
+            - name: WEIR_AGENT_NAMESPACE
+              value: {{ include "weir.agentNamespace" . | quote }}
+            - name: WEIR_AGENT_SECRET
+              value: {{ .Values.agents.secret | quote }}
+            - name: WEIR_AGENT_SERVICE_ACCOUNT
+              value: {{ .Values.agents.serviceAccount | quote }}
+            - name: WEIR_AGENT_CPU
+              value: {{ .Values.agents.cpu | quote }}
+            - name: WEIR_AGENT_MEMORY
+              value: {{ .Values.agents.memory | quote }}
+            {{- end }}
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 20
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          {{- with .Values.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}

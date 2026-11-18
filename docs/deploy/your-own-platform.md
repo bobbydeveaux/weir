@@ -20,6 +20,10 @@ Tags: `edge` is the latest commit on `main`; a version such as `0.1.0` is a rele
 | Secrets for connections | `WEIR_SECRET__<WORKSPACE>__<NAME>` variables, or files under `WEIR_SECRETS_DIR` |
 | To stay running | A worker polls for work, so one instance must stay up. A platform that stops idle services needs to be told to keep one |
 
+## On Kubernetes
+
+Use the chart, [deploy/helm/weir](../../deploy/helm/weir/README.md). Your own repository then holds a values file and whatever makes your Secrets, and names the chart.
+
 ## A repository of your own
 
 ```dockerfile

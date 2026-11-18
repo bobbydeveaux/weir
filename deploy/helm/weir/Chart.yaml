@@ -1,0 +1,9 @@
+apiVersion: v2
+name: weir
+description: Weir, a workflow engine for work that mixes code, models and people
+type: application
+version: 0.1.0
+appVersion: "edge"
+home: https://github.com/bobbydeveaux/weir
+sources:
+  - https://github.com/bobbydeveaux/weir

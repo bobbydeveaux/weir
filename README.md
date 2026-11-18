@@ -114,7 +114,9 @@ curl localhost:8080/v1/workspaces -H 'Authorization: Bearer local-admin-key'
 
 Two images are published: `ghcr.io/bobbydeveaux/weir` (the server) and `ghcr.io/bobbydeveaux/weir-agent` (what an agent runs in). `edge` is the latest commit on `main`. The server image refuses to start without `WEIR_ADMIN_KEY`, so that a server on a network is never open by accident.
 
-To run Weir on a platform of your own, start from the image in a small repository of your own: [docs/deploy/your-own-platform.md](docs/deploy/your-own-platform.md).
+On Kubernetes, there is a Helm chart: [deploy/helm/weir](deploy/helm/weir/README.md). It runs the server, migrates the database before each release, and lets Weir start each agent as a Job of its own.
+
+To run Weir on a platform of your own, start from the image, or the chart, in a small repository of your own: [docs/deploy/your-own-platform.md](docs/deploy/your-own-platform.md).
 
 ### Access
 

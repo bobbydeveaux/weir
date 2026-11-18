@@ -1,0 +1,69 @@
+# The Weir server: the API and a worker in one program.
+image:
+  repository: ghcr.io/bobbydeveaux/weir
+  # The version to run. Empty means the chart's own appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# A worker polls for work, so one copy must stay up. More than one is safe:
+# each step is claimed by one worker.
+replicaCount: 1
+
+# existingSecret names a Kubernetes Secret you make yourself. Every key in it
+# becomes an environment variable of the server. It must hold:
+#
+#   WEIR_ADMIN_KEY       the key that may do anything; the server will not start without it
+#   WEIR_DATABASE_URL    the Postgres database (or WEIR_DATABASE_HOST and its parts)
+#
+# and may hold the secrets your connections name, as
+# WEIR_SECRET__<WORKSPACE>__<NAME>. The chart never holds a secret itself.
+existingSecret: ""
+
+# env holds any other setting, by name. See the README for the full list.
+env: {}
+#  WEIR_PUBLIC_URL: https://weir.example.com
+
+# Run "weir migrate" before each install and upgrade.
+migrate:
+  enabled: true
+
+# Where agents run. With "kubernetes", each agent step is a Job in this
+# cluster, and the chart gives Weir's service account leave to manage Jobs.
+agents:
+  # inline (beside the worker) or kubernetes (a Job each).
+  runner: kubernetes
+  image:
+    repository: ghcr.io/bobbydeveaux/weir-agent
+    tag: ""
+  # A Secret you make yourself, whose keys become an agent's environment: the
+  # model's credential, such as CLAUDE_CODE_OAUTH_TOKEN. Weir never reads it.
+  secret: ""
+  # Where Jobs are made. Empty means the release's own namespace.
+  namespace: ""
+  # The account an agent's pod runs as, for a cloud's workload identity.
+  serviceAccount: ""
+  cpu: ""
+  memory: ""
+
+serviceAccount:
+  # Annotations for Weir's own service account, for a cloud's workload
+  # identity (to reach a bucket, for example).
+  annotations: {}
+
+service:
+  type: ClusterIP
+  port: 8080
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: ""
+  # The name of a TLS Secret. Empty means none.
+  tlsSecret: ""
+
+resources: {}
+nodeSelector: {}
+tolerations: []
+podAnnotations: {}
