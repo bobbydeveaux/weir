@@ -94,7 +94,7 @@ To make one real call through the Claude command line: `WEIR_TEST_CLAUDE=1 go te
 | `WEIR_DATABASE_HOST`, `_PORT`, `_NAME`, `_USER`, `_PASSWORD`, `_SSLMODE` | The database in parts, for a platform that hands them out one at a time. Used when `WEIR_DATABASE_URL` is not set | none |
 | `PORT` | The port to listen on, where a platform sets it and `WEIR_HTTP_ADDR` is not set | none |
 | `WEIR_REQUIRE_ADMIN_KEY` | Refuse to start without `WEIR_ADMIN_KEY`. The container image sets it | not set |
-| `WEIR_AGENT_RUNNER` | Where agents run: `inline` (beside the worker) or `docker` (a container each). See "Where agents run" below | `inline` |
+| `WEIR_AGENT_RUNNER` | Where agents run: `inline` (beside the worker), `docker` (a container each) or `kubernetes` (a Job each). See "Where agents run" below | `inline` |
 | `WEIR_AGENT_IMAGE` | The image agents run in, for `docker`. Build it from `deploy/agent.Dockerfile` | none |
 | `WEIR_AGENT_URL` | Weir's address as an agent's container reaches it | `http://host.docker.internal` and the API's port |
 | `WEIR_AGENT_DOCKER_ARGS` | Extra arguments for `docker run`: a network, memory and CPU limits | none |
@@ -281,6 +281,7 @@ An agent that can do real work should run in a container of its own, with every 
 |---|---|---|
 | `inline` (the default) | beside Weir's worker, on the same machine | use only what its step lists, inside a sandbox |
 | `docker` | in a container of its own, one per step | use every tool. The container is the boundary |
+| `kubernetes` | in a Kubernetes Job of its own, one per step | the same |
 
 ```bash
 docker build -f deploy/agent.Dockerfile -t weir-agent .
@@ -311,7 +312,29 @@ Know the limits:
 - **The cost is the agent's word.** The container reports what the model call cost. Sending model calls through Weir, so that Weir counts them itself and the container holds no model credential, is not built.
 - A directory that packs to more than 30 MB cannot be sent, and neither can a result larger than that.
 - With `docker`, every `ai` step runs in a container. `decide` steps do not: they have no tools.
-- Docker only. Cloud Run, Fargate and AgentCore are not built.
+- Docker and Kubernetes. Cloud Run jobs, Fargate and AgentCore are not built.
+
+#### On Kubernetes
+
+With `WEIR_AGENT_RUNNER=kubernetes`, Weir starts each agent as a Job in the cluster it runs in, waits for it, and removes it.
+
+| Setting | Meaning |
+|---|---|
+| `WEIR_AGENT_IMAGE` | The image agents run in. Required |
+| `WEIR_AGENT_URL` | Weir's address inside the cluster, such as `http://weir.weir.svc:8080`. Required |
+| `WEIR_AGENT_SECRET` | A Kubernetes Secret whose keys become the pod's environment: the model's credential. Weir never reads it |
+| `WEIR_AGENT_NAMESPACE` | Where Jobs are made. Weir's own namespace if left out |
+| `WEIR_AGENT_SERVICE_ACCOUNT` | The account the pod runs as, for a cloud's workload identity |
+| `WEIR_AGENT_CPU`, `WEIR_AGENT_MEMORY` | The pod's requests and limits, such as `1` and `2Gi` |
+
+- The pod gets no credential for the cluster: its service account token is not mounted. It does not run as root and cannot gain privileges.
+- Weir's own service account needs to create, read and delete Jobs, and to read pods and their logs, in the namespace agents run in. Nothing else.
+- The Job is given the time the step has left, so the cluster stops it if Weir does not.
+- If the Job fails before the agent reports back, the end of the pod's log is in the step's error.
+- What a pod may reach on the network is the cluster's to decide, with a NetworkPolicy.
+- The step's one-time token is in the Job's description, so anyone who can read Jobs in that namespace can read it while the step runs. It opens only that step.
+
+Proven on a local cluster: a real agent ran as a Job, took the model's credential from a Secret, ran as a non-root user, and the Job was removed afterwards.
 
 ### An agent that works in a prepared directory
 

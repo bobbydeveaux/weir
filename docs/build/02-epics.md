@@ -316,6 +316,7 @@ Weir is designed to idle at zero. Today a worker polls, so one instance must sta
 - [ ] Timers and retries fired by a scheduler calling Weir (Cloud Scheduler or Cloud Tasks first) (#57)
 - [ ] Long agent steps run off the request, so that a platform's request time limit does not cut them short (#58)
 - [ ] A guide to running on Cloud Run with Secret Manager, and the same for AWS and Azure (#59)
+- [x] Launch an agent as a Kubernetes Job (`WEIR_AGENT_RUNNER=kubernetes`): one Job per step, with the model's credential from a Secret Weir never reads, no cluster credential in the pod, a non-root user, and the Job removed when it ends. It talks to the Kubernetes API directly; no client library is added. Proven with a real agent on a local cluster. Not run on a managed cluster (#107)
 - [ ] Launch an agent's container as a Cloud Run job, with a service account that can call the model and nothing else (#93)
 - [ ] Launch an agent's container on AWS: a Fargate task, and Bedrock AgentCore (#94)
 - [ ] Secrets created at run time for a hosted service: kept in Postgres, encrypted with a key held by the cloud (#60)

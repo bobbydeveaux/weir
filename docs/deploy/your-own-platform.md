@@ -43,6 +43,6 @@ Beside those two files goes whatever your platform reads: a Helm values file, a 
 
 ## Not built yet
 
-- **Agents in containers on a cloud.** The server can start an agent's container with Docker. It cannot yet start one as a Cloud Run job, a Fargate task or a Kubernetes job, and a managed platform will not let it use Docker. Until then, a deployed Weir runs every kind of step except an agent in its own container.
+- **Agents in containers, outside Kubernetes.** The server can start an agent's container with Docker (a laptop) or as a Kubernetes Job (a cluster). It cannot yet start one as a Cloud Run job or a Fargate task. On those, a deployed Weir runs every kind of step except an agent in its own container.
 - **Scale to zero.** Timers, retries and waiting work are found by polling.
 - **The console** is not in the server image.
