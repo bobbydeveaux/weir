@@ -63,8 +63,10 @@ func (e *Engine) liveAttempt(ctx context.Context, tx pgx.Tx, token string, statu
 // createStep adds the next step of a run. A human step is parked at once,
 // because nothing has to run before a person can act on it.
 func (e *Engine) createStep(ctx context.Context, tx pgx.Tx, run *runRow, st *spec.Step, scope spec.Scope) error {
+	// What a step is given is its input. An external step may say it as
+	// call.body instead, which is the older way of writing the same thing.
 	mapping := st.Input
-	if st.Kind == spec.KindExternal && st.Call != nil {
+	if st.Kind == spec.KindExternal && st.Call != nil && st.Call.Body != nil {
 		mapping = st.Call.Body
 	}
 	var input any = map[string]any{}
