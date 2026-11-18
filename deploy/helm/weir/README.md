@@ -39,7 +39,8 @@ Use your cluster's own way of making those Secrets if it has one: External Secre
 | `existingSecret` | A Secret whose keys become the server's environment. It must hold `WEIR_ADMIN_KEY` and the database | none |
 | `env` | Any other setting, by name | none |
 | `replicaCount` | Copies of the server. More than one is safe | 1 |
-| `migrate.enabled` | Run `weir migrate` before each install and upgrade | true |
+| `migrate.enabled` | Bring the database up to date with `weir migrate` | true |
+| `migrate.when` | `before`: in a Job before each install and upgrade. `start`: in the server's pod before it serves, for a cluster that fills Secrets in after install (External Secrets Operator) | `before` |
 | `agents.runner` | `kubernetes` (a Job each) or `inline` (beside the worker) | `kubernetes` |
 | `agents.image.repository`, `agents.image.tag` | What an agent runs in. Build your own on top of it to add toolchains | `ghcr.io/bobbydeveaux/weir-agent` |
 | `agents.secret` | A Secret whose keys become an agent's environment: the model's credential | none |
