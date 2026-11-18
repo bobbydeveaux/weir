@@ -140,6 +140,9 @@ func (c *Claude) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 				dir, hostList(req.Shell.Hosts)))
 		}
 	}
+	if req.Effort != "" {
+		extra = append(extra, "--effort", req.Effort)
+	}
 	out, err := c.call(ctx, system, req.Prompt, c.model(req.Tier, req.Model), req.Schema, req.BudgetUSD, builtin, dir, extra...)
 	res := RunResult{Usage: out.usage, Transcript: out.text}
 	if err != nil {
@@ -152,6 +155,8 @@ func (c *Claude) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 func finish(req RunRequest, res RunResult, out claudeOutput, dir string, before *tree) (RunResult, error) {
 	var err error
 	switch {
+	case before != nil && req.Workspace.Discard:
+		// The agent read the directory. Whatever it did to it is thrown away.
 	case before != nil:
 		limit := WriteLimit{}
 		if req.Writes != nil {
@@ -206,6 +211,9 @@ func (c *Claude) runUnrestricted(ctx context.Context, req RunRequest) (RunResult
 	case req.Writes != nil:
 		system = strings.TrimSpace(system + fmt.Sprintf("\n\nWrite every file you produce inside the directory %s (%s). Only files there are kept. At most %d files, %d MB in total.",
 			outDir, filepath.Join(dir, outDir), req.Writes.MaxFiles, req.Writes.MaxBytes>>20))
+	}
+	if req.Effort != "" {
+		extra = append(extra, "--effort", req.Effort)
 	}
 	out, err := c.call(ctx, system, req.Prompt, c.model(req.Tier, req.Model), req.Schema, req.BudgetUSD, allTools, dir, extra...)
 	res := RunResult{Usage: out.usage, Transcript: out.text}
@@ -272,19 +280,22 @@ func claudeArgs(system, model string, schema []byte, budgetUSD float64, builtin 
 	args := []string{
 		"--print",
 		"--output-format", "json",
-		"--strict-mcp-config",   // no MCP servers except those Weir names
-		"--setting-sources", "", // ignore user and project settings
+		"--strict-mcp-config", // no MCP servers except those Weir names
 		"--no-session-persistence",
 	}
 	if builtin == allTools {
 		// An agent in a container of its own: every tool, and no questions.
-		// It keeps the command line's own guidance on how to use them.
-		args = append(args, "--dangerously-skip-permissions")
+		// It keeps the command line's own guidance on how to use them, and
+		// loads the skills and settings in its home directory, which whoever
+		// built the image put there. A repository's own are still ignored.
+		args = append(args, "--dangerously-skip-permissions", "--setting-sources", "user")
 		if system != "" {
 			args = append(args, "--append-system-prompt", system)
 		}
 	} else {
-		args = append(args, "--tools", builtin, "--permission-mode", "dontAsk")
+		// Beside the worker: only the tools named, and no settings from the
+		// user or the project.
+		args = append(args, "--tools", builtin, "--permission-mode", "dontAsk", "--setting-sources", "")
 		if system != "" {
 			args = append(args, "--system-prompt", system)
 		}

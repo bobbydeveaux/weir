@@ -46,7 +46,9 @@ type Job struct {
 	Prompt string          `json:"prompt"`
 	Schema json.RawMessage `json:"schema,omitempty"`
 	// Model is the model to use, already chosen by Weir.
-	Model     string        `json:"model,omitempty"`
+	Model string `json:"model,omitempty"`
+	// Effort is how hard the model is asked to think. Empty is its default.
+	Effort    string        `json:"effort,omitempty"`
 	BudgetUSD float64       `json:"budget_usd,omitempty"`
 	Tools     []runner.Tool `json:"tools,omitempty"`
 	// Writes are the limits on what the agent may write or change.
@@ -55,6 +57,8 @@ type Job struct {
 	Archive string `json:"archive,omitempty"`
 	// Ignore lists paths in a workspace that are never kept, as a .gitignore does.
 	Ignore []string `json:"ignore,omitempty"`
+	// Discard says that nothing changed in a workspace is kept.
+	Discard bool `json:"discard,omitempty"`
 }
 
 // Result is what an agent sends back.
@@ -137,7 +141,7 @@ func Run(ctx context.Context, c *Client, r runner.Runner) error {
 		return fmt.Errorf("the job could not be read: %w", err)
 	}
 
-	req := runner.RunRequest{Step: job.Step, System: job.System, Prompt: job.Prompt, Schema: job.Schema, Model: job.Model,
+	req := runner.RunRequest{Step: job.Step, System: job.System, Prompt: job.Prompt, Schema: job.Schema, Model: job.Model, Effort: job.Effort,
 		BudgetUSD: job.BudgetUSD, Tools: job.Tools, Writes: job.Writes}
 	if len(job.Tools) > 0 {
 		req.ToolURL, req.ToolToken = strings.TrimRight(c.BaseURL, "/"), c.Token
@@ -145,7 +149,7 @@ func Run(ctx context.Context, c *Client, r runner.Runner) error {
 	var result Result
 	switch job.Archive {
 	case Workspace:
-		req.Workspace = &runner.Workspace{Prepare: func(ctx context.Context, dir string) (runner.Prepared, error) {
+		req.Workspace = &runner.Workspace{Discard: job.Discard, Prepare: func(ctx context.Context, dir string) (runner.Prepared, error) {
 			return runner.Prepared{Ignore: job.Ignore}, c.unpack(ctx, dir)
 		}}
 	case Files:

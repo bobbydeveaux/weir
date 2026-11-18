@@ -63,6 +63,8 @@ type RunRequest struct {
 	// Model, when set, is the model the step's template asks for. It is used
 	// when the step names no tier.
 	Model string
+	// Effort, when set, is how hard the step's template asks the model to think.
+	Effort string
 	// BudgetUSD is the most this call may spend. Zero means no limit.
 	BudgetUSD float64
 	// Tools are the tools the agent may call. The agent reaches them only

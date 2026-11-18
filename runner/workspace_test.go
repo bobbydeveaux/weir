@@ -138,3 +138,39 @@ func TestAnAgentWorksInAPreparedDirectoryLive(t *testing.T) {
 		t.Errorf("changes = %v, want main.go changed, old.go deleted and docs/count.txt holding 1", res.Files)
 	}
 }
+
+func TestAPassThatKeepsNothingAndItsEffort(t *testing.T) {
+	var args []string
+	run := func(_ context.Context, _ string, a, _ []string, _, d string) ([]byte, error) {
+		args = a
+		_ = os.WriteFile(filepath.Join(d, "main.go"), []byte("package main // scribbled on\n"), 0o600)
+		_ = os.WriteFile(filepath.Join(d, "notes.txt"), []byte("x"), 0o600)
+		return []byte(`{"result":"ok","structured_output":{"ok":true},"total_cost_usd":0.01}`), nil
+	}
+	req := RunRequest{Prompt: "assess it", Effort: "high", Schema: json.RawMessage(`{"type":"object"}`),
+		Workspace: &Workspace{Prepare: repo, Discard: true}, Writes: &WriteLimit{MaxFiles: 1, MaxBytes: 10}}
+	for _, c := range []*Claude{{run: run}, {run: run, Unrestricted: true}} {
+		res, err := c.Run(context.Background(), req)
+		if err != nil {
+			t.Fatalf("Run (unrestricted %v): %v", c.Unrestricted, err)
+		}
+		// It changed two files, against a limit of one. Neither is kept, and
+		// the limit is not what stopped them.
+		if len(res.Files) != 0 {
+			t.Errorf("a pass that keeps nothing kept %v", res.Files)
+		}
+		joined := strings.Join(args, " ")
+		if !strings.Contains(joined, "--effort high") {
+			t.Errorf("the effort was not passed on: %s", joined)
+		}
+		// An agent in its own container loads its image's skills and settings;
+		// one beside the worker loads none.
+		want := `--setting-sources  `
+		if c.Unrestricted {
+			want = "--setting-sources user"
+		}
+		if !strings.Contains(joined+" ", want) {
+			t.Errorf("unrestricted %v: args = %s", c.Unrestricted, joined)
+		}
+	}
+}

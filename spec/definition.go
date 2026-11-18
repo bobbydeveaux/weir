@@ -578,6 +578,9 @@ type Workspace struct {
 	Handler string `yaml:"handler" json:"handler"`
 	// With holds fixed settings for the handler, such as which connection to use.
 	With map[string]any `yaml:"with,omitempty" json:"with,omitempty"`
+	// Discard says that nothing the agent changes is kept. It is for a step
+	// that reads a directory and must leave no mark, such as an assessment.
+	Discard bool `yaml:"discard,omitempty" json:"discard,omitempty"`
 }
 
 var handlerPattern = regexp.MustCompile(`^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$`)
