@@ -237,6 +237,11 @@ func (k *Kubernetes) wait(ctx context.Context, c *kube, path, name string) error
 			} `json:"status"`
 		}
 		if _, err := c.call(ctx, http.MethodGet, path, nil, &job); err != nil {
+			if ctx.Err() != nil {
+				// The step ran out of time, or was cancelled, part-way through
+				// asking. That is not Kubernetes being out of reach.
+				return fmt.Errorf("stopped waiting for the agent's Job: %w", ctx.Err())
+			}
 			return err
 		}
 		if job.Status.Succeeded > 0 {
