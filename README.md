@@ -152,6 +152,7 @@ export WEIR_PROXY_USER_HEADER=X-Goog-Authenticated-User-Email
 - A request with that header needs no key. The person may do anything, in any workspace, and their address is the actor on everything they do. The console shows who is signed in, and asks for neither a key nor a name.
 - **This is only safe where nothing but the proxy can reach the server.** Anyone who can reach it directly can write the header themselves. Weir does not check a signature on it.
 - Keys go on working beside it, for callers that are not people. If those callers come from outside, run a second copy of the server for them, on the same database and without this setting.
+- A copy of the server that only answers people need not do the work as well: `WEIR_WORKER=off` leaves it to another copy on the same database. Set it on a host that pauses a server between requests, where a paused worker loses its database connection and stops the server.
 - `WEIR_API_PREFIX=/api` makes the API answer under `/api/v1` as well, for a proxy that only passes on addresses under a path of its own. Build the console for it with `VITE_WEIR_API_BASE=/api/v1 npm run build`.
 
 Not yet: sign-in of Weir's own, roles for people, and checking the proxy's signature.

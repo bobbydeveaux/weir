@@ -88,3 +88,15 @@ func TestListsAndPairsAreReadFromSettings(t *testing.T) {
 		t.Errorf("pairs = %v", got)
 	}
 }
+
+func TestWhetherAServerDoesTheWork(t *testing.T) {
+	for setting, want := range map[string]bool{"": true, "on": true, "off": false} {
+		got, err := works(setting)
+		if err != nil || got != want {
+			t.Errorf("works(%q) = %v, %v; want %v", setting, got, err, want)
+		}
+	}
+	if _, err := works("sometimes"); err == nil {
+		t.Error("a setting that is neither on nor off was accepted")
+	}
+}
