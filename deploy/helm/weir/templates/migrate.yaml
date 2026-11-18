@@ -1,0 +1,34 @@
+{{- if .Values.migrate.enabled }}
+# Brings the database up to the version this release needs, before the new
+# server starts. A failed migration stops the install or upgrade.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "weir.name" . }}-migrate
+  labels: {{- include "weir.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels: {{- include "weir.selector" . | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: migrate
+          image: {{ include "weir.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["migrate"]
+          {{- include "weir.env" . | nindent 10 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+{{- end }}

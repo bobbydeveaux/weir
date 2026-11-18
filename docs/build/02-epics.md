@@ -320,7 +320,7 @@ Weir is designed to idle at zero. Today a worker polls, so one instance must sta
 - [ ] Launch an agent's container as a Cloud Run job, with a service account that can call the model and nothing else (#93)
 - [ ] Launch an agent's container on AWS: a Fargate task, and Bedrock AgentCore (#94)
 - [ ] Secrets created at run time for a hosted service: kept in Postgres, encrypted with a key held by the cloud (#60)
-- [ ] A Helm chart, for those who already run Kubernetes (#61)
+- [x] A Helm chart (`deploy/helm/weir`): the server, a migration before each install and upgrade, and leave for Weir to start each agent as a Job, limited to the namespace agents run in. It holds no secret and runs no database. Proven on a local cluster, with a real agent step run by the Weir it installed. Not run on a managed cluster (#61)
 
 ### 18. Learning and authoring
 
