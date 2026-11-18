@@ -73,6 +73,7 @@ Environment:
   WEIR_PUBLIC_URL    Address third parties use to reach the API (default http://localhost:8080)
   WEIR_RUNNER        How ai and decide steps run: cli, api or fake (default cli)
   WEIR_ADMIN_KEY     Turns authentication on, and is the key that may do anything
+  WEIR_WORKER        off: answer the API and leave the work to another server on the same database
   WEIR_CONSOLE_DIR   Directory of the console's files, to serve the console from this server
   WEIR_PROXY_USER_HEADER
                      Header a sign-in proxy sets to say who is asking. That person needs no key.
@@ -349,7 +350,15 @@ func (a *app) serve([]string) error {
 	}
 	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: api.New(eng, a.reg, a.apiOptions(adminKey)...), ReadHeaderTimeout: 10 * time.Second}
 	errs := make(chan error, 2)
-	go func() { errs <- w.Run(a.ctx) }()
+	working, err := works(a.getenv("WEIR_WORKER"))
+	if err != nil {
+		return err
+	}
+	if working {
+		go func() { errs <- w.Run(a.ctx) }()
+	} else {
+		agents = "by another server: this one only answers the API (WEIR_WORKER=off)"
+	}
 	// Hear from Postgres when a run moves, so that streams send at once.
 	go func() { _ = eng.Listen(a.ctx) }()
 	go func() {
@@ -760,4 +769,18 @@ func (a *app) apiOptions(adminKey string) []api.Option {
 		opts = append(opts, api.WithPrefix(prefix))
 	}
 	return opts
+}
+
+// works reads WEIR_WORKER: whether this server does the work as well as
+// answering the API. A server that only answers people can leave the work to
+// another on the same database, which matters on a host that pauses a server
+// between requests: a paused worker loses its database connection.
+func works(setting string) (bool, error) {
+	switch setting {
+	case "", "on":
+		return true, nil
+	case "off":
+		return false, nil
+	}
+	return false, fmt.Errorf("WEIR_WORKER is %q: it must be on or off", setting)
 }
