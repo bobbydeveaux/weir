@@ -162,6 +162,23 @@ A definition is checked when it is published, and refused if it breaks any of th
 - No secret appears in a definition. Third parties are reached through named connections.
 - A published version is never changed. A change is a new version.
 
+## What an `ai` step has gained since this was written
+
+This document is the design. The engine has since added settings to an `ai` step that the definition above does not show. The README describes each in full.
+
+| Setting | What it does |
+|---|---|
+| `files:` | Documents fetched for the agent to read, or the files an earlier step produced |
+| `writes:` | Lets the agent produce files, with limits on how many and how large, and rules for which paths it may change (`only`, `never`, and a list protected by default) |
+| `workspace:` | Names registered code that fills the agent's working directory before it runs, such as a checkout. What the agent changed there is kept. `discard: true` keeps nothing |
+| `shell:` | Gives an agent run beside the worker a sandboxed shell, with a list of hosts it may reach |
+
+Three things here differ from the design above:
+
+- **`sandbox:` is not acted on.** It parses, and publishing says so. Which paths an agent may change is under `writes`, and what a shell may reach is under `shell`.
+- **Where an agent runs is not in the definition.** Whoever runs Weir chooses: beside the worker, or in a container of its own with every tool. The same definition runs either way.
+- **An external step's data is its `input:`**, like every other kind of step. `call.body` is an older way of writing the same thing.
+
 ## The five step kinds
 
 The five kinds use two mechanisms. Decide, AI and deterministic steps run now: a worker claims the step and returns a result. Human and external steps wait: the step is parked until someone returns its token.
