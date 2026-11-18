@@ -6,9 +6,11 @@ The goal is a version that runs locally, supports all five step kinds, and can b
 
 ## Where it stands
 
-Updated 16 November 2026. This file is the project's to-do list. Tick an item in the same change that finishes it.
+Updated 18 November 2026. This file is the project's to-do list. Tick an item in the same change that finishes it.
 
 A real workflow has run end to end from the command line with the Claude command line doing the model steps: a support message was classified, a reply drafted, the requester refused when she tried to approve it, and the reply sent after someone else approved. The run cost $0.0006.
+
+Since then two real applications have run on it. The second is a live application's fix-the-vulnerability workflow, run locally against a real repository: an agent in a container of its own assessed a vulnerable dependency, a person overrode its route at a gate, a second agent wrote tests and a third made the fix, and two real pull requests were opened. Nothing is deployed yet.
 
 | Epic | State | What is left |
 | --- | --- | --- |
@@ -22,14 +24,14 @@ A real workflow has run end to end from the command line with the Claude command
 | 7 Human steps | Mostly done | Checking that the person deciding holds the role; reopening a decision |
 | 8 External steps | Mostly done | Signing in with the machine's own cloud identity; allowed addresses |
 | 9 Gateway and decide | Mostly done | A live call to Jev and to Gemini Decisions (no keys yet); the Gemini command line; Codex steps with tools; a fallback provider; shadow mode; workload identity and a direct-call runner |
-| 10 AI steps | Mostly done | The `approve` class of tool; marking tool output as data; the full transcript (the prompt and the final reply are kept, the turns in between are not) |
-| 11 Triggers | Mostly done | A `decide` filter in a trigger; counters |
+| 10 AI steps | Mostly done | Model calls sent through Weir, so a container holds no model credential; an agent image per application; the `approve` class of tool; marking tool output as data; the full transcript |
+| 11 Triggers | Mostly done | A step that waits for an event; a `decide` filter in a trigger; counters |
 | 12 Hooks | Mostly done | Hooks on a single step |
 | 13 API and command line | Mostly done | Sign-in for people (the console takes a key today); a published API description; logs and metrics; the newer endpoints on the command line |
-| 14 Examples and conformance | Started | Two more examples; tests for all three; the conformance suite. A real application (agent-demo) runs on Weir, which the plan did not ask for |
+| 14 Examples and conformance | Started | Two more examples; tests for all three; the conformance suite. Two real applications have run on Weir, which the plan did not ask for; the second is not switched over |
 | 15 Release | Started | The repository is public. No tagged version yet |
-| 16 Pipes | Started | Signed webhooks come in as events, and the GitHub tools are in. Left: the package format, Slack, a real write to GitHub, and connecting from the console |
-| 17 Running in the cloud | Not started | Weir does not idle at zero yet |
+| 16 Pipes | Started | GitHub is the first: signed webhooks in, tools, a GitHub App to sign in with, a checkout and a commit that opens a pull request, proven against the real GitHub. Left: the package format, Slack, and connecting from the console |
+| 17 Running in the cloud | Started | Images, a Helm chart, and agents as Kubernetes Jobs or Cloud Run jobs are built. Nothing is deployed, and the Cloud Run launcher has not met the real service. Left: scale to zero, long steps off the request, guides for each cloud, AWS |
 | 18 Learning and authoring | Not started |  |
 
 ## What "working" means

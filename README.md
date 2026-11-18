@@ -2,7 +2,7 @@
 
 A workflow engine built for AI. Every step is one of five kinds (decide, AI, deterministic, human or external), and all five obey one contract: typed inputs and outputs, an owner, a budget and a full audit record. Weir runs as a stateless Go service on Postgres.
 
-**Status: early build.** The engine runs workflows end to end on a laptop, with all five step kinds. It is not released, the contract will change, and several parts of the design are not built yet (see below). The first tagged version will be `v0.1.0`.
+**Status: early build.** The engine runs workflows end to end, with all five step kinds, and two real applications have run on it. It can be run from a container image or a Helm chart, but **it has not yet been deployed anywhere**: everything described here has been proven on a laptop or a local cluster, and each section says what has and has not met the real service. It is not released, the contract will change, and several parts of the design are not built yet (see below). The first tagged version will be `v0.1.0`.
 
 Site: [weir.stackramp.io](https://weir.stackramp.io) · Integration docs: [weir.stackramp.io/docs](https://weir.stackramp.io/docs/) · [What is done and what is left](docs/build/02-epics.md)
 
@@ -40,6 +40,9 @@ Then follow [the support inbox example](examples/support-inbox), which classifie
 | Audit | An append-only event log per run, and a record of every model call (prompt, reply, tokens, cost) and every tool call |
 | Tenancy and access | Workspaces that cannot see each other; API keys with roles, each bound to one workspace |
 | Models | Claude and Codex through their command lines; Claude on Bedrock, Vertex AI or through a gateway by settings |
+| Where agents run | Beside the worker in a sandbox, or in a container of their own with every tool: with Docker, as a Kubernetes Job, or as a run of a Cloud Run job |
+| Work on a repository | Check out a repository for an agent, limit which paths it may change, and commit what it changed from a fresh clone as a pull request. A connection can sign in as a GitHub App |
+| Running it | Container images for the server and for agents, `docker compose`, and a Helm chart |
 | Interfaces | An HTTP API, the `weir` command line, and a web console in `console/` |
 
 The database enforces the rules that matter: published versions and events cannot be changed or deleted, and a step can have only one live attempt.
@@ -54,13 +57,15 @@ The full list, with an issue for each item, is [docs/build/02-epics.md](docs/bui
 - **Roles on approvals.** A human step records the role it is for, but does not yet check that the person deciding holds it. Only "not the requester" and a named user are enforced.
 - **Scale to zero.** A worker polls for work, so one instance must stay running.
 - **Calling models directly.** Agents run through a command line. A runner that calls a provider's API itself, for Bedrock, Vertex AI and Azure AI Foundry beyond Claude, is not built.
-- **Running an agent in the cloud.** An agent can run in a container of its own with Docker. Launchers for Cloud Run, Fargate and AgentCore are not built.
+- **Running an agent on AWS.** An agent can run in a container of its own with Docker, on Kubernetes or as a Cloud Run job. Fargate and AgentCore are not built.
+- **Waiting for an event.** An event can start a run. It cannot move one that is already waiting, so a workflow cannot yet wait for GitHub to say a pull request was merged.
+- **An agent image per application.** One image serves every agent on a server.
 - **Pipes as packages.** The parts exist (connections, webhooks, tools), and GitHub has all three, but there is no installable package or catalogue.
 - **Parallel steps, fan-out and sub-workflows.** Steps run one at a time.
 - **Tiers and sandbox settings in a definition.** They parse, and publishing says they are not enforced.
 - **A tagged release.** There is no version yet, and the contract will change before `v0.1.0`.
 
-Some of what is built has not met the real service it is for: the write tools for GitHub, the decision models, and Bedrock, Vertex AI and gateways have been tested against stand-ins or not run at all. The to-do list says which, item by item.
+Some of what is built has not met the real service it is for. Tested against a stand-in only, or not run at all: starting an agent as a Cloud Run job; the GitHub tools that write (the commit handler that opens a pull request is proven); the decision models; Bedrock, Vertex AI and gateways; buckets other than a local S3 stand-in; and anything on Linux outside a container. The to-do list says which, item by item.
 
 ## Develop
 
@@ -112,7 +117,7 @@ docker compose --profile weir up        # Postgres and Weir, built from this che
 curl localhost:8080/v1/workspaces -H 'Authorization: Bearer local-admin-key'
 ```
 
-Two images are published: `ghcr.io/bobbydeveaux/weir` (the server) and `ghcr.io/bobbydeveaux/weir-agent` (what an agent runs in). `edge` is the latest commit on `main`. The server image refuses to start without `WEIR_ADMIN_KEY`, so that a server on a network is never open by accident.
+Two images are published: `ghcr.io/bobbydeveaux/weir` (the server) and `ghcr.io/bobbydeveaux/weir-agent` (what an agent runs in). `edge` is the latest commit on `main`. If a pull is refused, build the image yourself from `deploy/`: it needs nothing but this repository. The server image refuses to start without `WEIR_ADMIN_KEY`, so that a server on a network is never open by accident.
 
 On Kubernetes, there is a Helm chart: [deploy/helm/weir](deploy/helm/weir/README.md). It runs the server, migrates the database before each release, and lets Weir start each agent as a Job of its own.
 
