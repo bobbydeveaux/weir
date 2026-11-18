@@ -22,7 +22,9 @@ npm run build     # static files in build/
 npm run check     # svelte-check
 ```
 
-`build/` is plain static files with `index.html` as the fallback for every route. Serve it from the same origin as the API, or behind a reverse proxy that sends `/v1` to the API and everything else to `build/` (falling back to `index.html`).
+`build/` is plain static files with `index.html` as the fallback for every route. The Weir server serves it itself when `WEIR_CONSOLE_DIR` points at it, and the server image is built that way. Otherwise serve it from the same origin as the API, behind a reverse proxy that sends `/v1` to the API and everything else to `build/` (falling back to `index.html`).
+
+If the API is not at `/v1`, say where at build time: `VITE_WEIR_API_BASE=/api/v1 npm run build`.
 
 ## Layout
 

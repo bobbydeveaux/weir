@@ -43,6 +43,14 @@
 		return here && here.workflows === 0 ? list.filter((w) => w.workflows > 0) : [];
 	});
 
+	// Behind a sign-in proxy the server already knows who is asking, so the
+	// console shows that and asks for neither a key nor a name.
+	const me = useQuery(() => api.me(), { keep: true });
+	const signedIn = $derived(me.data?.signed_in ? me.data.name : '');
+	$effect(() => {
+		if (signedIn && session.actor !== signedIn) setActor(signedIn);
+	});
+
 	let actorDraft = $state(session.actor);
 	let keyDraft = $state(session.key);
 	// The server is asking for a key when a read comes back 401.
@@ -113,6 +121,9 @@
 					{/each}
 				</select>
 			</label>
+			{#if signedIn}
+				<span class="ctl"><span>Signed in as</span><strong>{signedIn}</strong></span>
+			{:else}
 			<label class="ctl">
 				<span>API key</span>
 				<input
@@ -140,6 +151,7 @@
 					spellcheck="false"
 				/>
 			</label>
+			{/if}
 		</header>
 
 		{#if elsewhere.length > 0}

@@ -28,6 +28,8 @@ type principal struct {
 	workspace string
 	role      string
 	actAs     bool
+	// signedIn is true for a person a sign-in proxy vouched for, not a key.
+	signedIn bool
 }
 
 type principalKey struct{}
@@ -53,8 +55,14 @@ func unauthorized(w http.ResponseWriter, why string) {
 // authenticate checks the request's key and decides what it may do. It
 // returns the workspace the request is for, or false after replying.
 func (s *server) authenticate(w http.ResponseWriter, r *http.Request, asked string) (*http.Request, string, bool) {
+	// A person the sign-in proxy vouches for needs no key. The proxy may send
+	// a credential of its own in the Authorization header, so that is not read.
+	if who := s.signedIn(r); who != "" {
+		p := &principal{name: who, role: engine.RoleAdmin, signedIn: true}
+		return r.WithContext(context.WithValue(r.Context(), principalKey{}, p)), asked, true
+	}
 	secret, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-	if !ok || secret == "" {
+	if !ok || secret == "" || s.adminKey == "" {
 		unauthorized(w, "send your API key as: Authorization: Bearer <key>")
 		return nil, "", false
 	}

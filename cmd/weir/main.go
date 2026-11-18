@@ -73,6 +73,11 @@ Environment:
   WEIR_PUBLIC_URL    Address third parties use to reach the API (default http://localhost:8080)
   WEIR_RUNNER        How ai and decide steps run: cli, api or fake (default cli)
   WEIR_ADMIN_KEY     Turns authentication on, and is the key that may do anything
+  WEIR_CONSOLE_DIR   Directory of the console's files, to serve the console from this server
+  WEIR_PROXY_USER_HEADER
+                     Header a sign-in proxy sets to say who is asking. That person needs no key.
+                     Only safe where nothing but the proxy can reach this server
+  WEIR_API_PREFIX    A path the API also answers under, such as /api, for a proxy that needs one
   WEIR_BLOB_URL      Where files are kept: s3://bucket, gs://bucket, azblob://container or
                      file:///directory (default: in Postgres)
   WEIR_SECRETS_DIR   Directory of secret files, one directory per workspace, for file: references
@@ -342,7 +347,7 @@ func (a *app) serve([]string) error {
 	if adminKey == "" {
 		access = "WARNING: no WEIR_ADMIN_KEY is set, so anyone who can reach this API can do anything"
 	}
-	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: api.New(eng, a.reg, api.WithAdminKey(adminKey)), ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: api.New(eng, a.reg, a.apiOptions(adminKey)...), ReadHeaderTimeout: 10 * time.Second}
 	errs := make(chan error, 2)
 	go func() { errs <- w.Run(a.ctx) }()
 	// Hear from Postgres when a run moves, so that streams send at once.
@@ -739,4 +744,20 @@ func (a *app) key(args []string) error {
 		fmt.Fprintf(a.out, "key %s no longer works\n", pos[0])
 	}
 	return nil
+}
+
+// apiOptions reads how the API is to be reached: with which key, behind which
+// proxy, and whether it serves the console as well.
+func (a *app) apiOptions(adminKey string) []api.Option {
+	opts := []api.Option{api.WithAdminKey(adminKey)}
+	if dir := a.getenv("WEIR_CONSOLE_DIR"); dir != "" {
+		opts = append(opts, api.WithConsole(dir))
+	}
+	if header := a.getenv("WEIR_PROXY_USER_HEADER"); header != "" {
+		opts = append(opts, api.WithProxyUser(header))
+	}
+	if prefix := a.getenv("WEIR_API_PREFIX"); prefix != "" {
+		opts = append(opts, api.WithPrefix(prefix))
+	}
+	return opts
 }

@@ -268,7 +268,9 @@ How work is claimed, held and returned.
 - [x] A run timeline: every step, attempt, cost and actor in order
 - [ ] Structured logs and basic metrics (#40)
 - [x] API keys and roles: `WEIR_ADMIN_KEY` turns authentication on; a key belongs to one workspace and is a reader, a writer or an admin; a key may be allowed to act for an application's users; only a hash is stored. Proven with agent-demo running against a locked server
-- [ ] Sign-in for people (single sign-on), so that the console does not need a pasted key and an approver's identity is proven, not asserted by an application (#41)
+- [x] Behind a sign-in proxy: `WEIR_PROXY_USER_HEADER` names the header the proxy puts the person's address in; that person needs no key and is the actor on everything they do. `WEIR_API_PREFIX` for a proxy that needs a path of its own. Only safe where nothing but the proxy reaches the server: the header's signature is not checked (#117)
+- [x] The console served by the server (`WEIR_CONSOLE_DIR`) and shipped in the server image (#117)
+- [ ] Sign-in for people (single sign-on) of Weir's own, with roles for people, so that an approver's identity is proven without a proxy in front (#41)
 - [x] Multi-tenant API: `X-Weir-Workspace` on every request, workspaces listed and created over the API, a test that one workspace cannot see or change another's
 - [x] Read API: workflows, versions, runs, the audit record, templates, connections, usage, the registry
 - [x] The console (SvelteKit) over the read API: overview, workflows with a diagram, runs, tasks, templates, connections. Screenshots in `docs/console/`

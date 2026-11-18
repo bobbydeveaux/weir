@@ -212,7 +212,16 @@ func New(eng *engine.Engine, reg *worker.Registry, opts ...Option) http.Handler 
 		}
 		reply(w, http.StatusCreated, map[string]string{"slug": in.Slug})
 	})
-	return s.scoped(mux)
+	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
+		// Who the server takes the caller to be, so that the console can show
+		// it and need not ask for a name the server will not use.
+		me := map[string]any{"name": "", "role": "", "workspace": "", "signed_in": false}
+		if p := principalOf(r); p != nil {
+			me = map[string]any{"name": p.name, "role": p.role, "workspace": p.workspace, "signed_in": p.signedIn}
+		}
+		reply(w, http.StatusOK, me)
+	})
+	return s.front(s.scoped(mux))
 }
 
 // WorkspaceHeader names the workspace a request is for. A request without it
@@ -231,7 +240,7 @@ func (s *server) scoped(next http.Handler) http.Handler {
 			// name its workspace in the address.
 			slug = r.URL.Query().Get("workspace")
 		}
-		if s.adminKey != "" && !open(r.URL.Path) {
+		if (s.adminKey != "" || s.proxyUser != "") && !open(r.URL.Path) {
 			var ok bool
 			if r, slug, ok = s.authenticate(w, r, slug); !ok {
 				return
@@ -275,6 +284,12 @@ type server struct {
 	reg *worker.Registry
 	// adminKey, when set, turns authentication on.
 	adminKey string
+	// proxyUser names the header a sign-in proxy sets to say who is asking.
+	proxyUser string
+	// console is the directory the console's files are served from.
+	console string
+	// prefix is a path the API also answers under.
+	prefix string
 }
 
 // actor says who a request is made by. With authentication on, that is the

@@ -1,4 +1,4 @@
-# The Weir server: the API and a worker in one program.
+# The Weir server: the API, a worker and the console in one image.
 #
 # Build it from the repository's root:
 #
@@ -22,15 +22,26 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags "-s -w" -o /out/weir ./cmd/weir
 
+# The console is plain static files, the same for every kind of processor.
+FROM --platform=$BUILDPLATFORM node:24-bookworm-slim AS console
+WORKDIR /console
+COPY console/package.json console/package-lock.json console/.npmrc ./
+RUN npm ci
+COPY console/ ./
+RUN npm run build
+
 FROM debian:bookworm-slim
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates git \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /out/weir /usr/local/bin/weir
+COPY --from=console /console/build /usr/share/weir/console
 RUN useradd --uid 10001 --create-home --shell /usr/sbin/nologin weir
 USER 10001
 WORKDIR /home/weir
 ENV WEIR_REQUIRE_ADMIN_KEY=1
+# The server serves the console at every address that is not the API's.
+ENV WEIR_CONSOLE_DIR=/usr/share/weir/console
 EXPOSE 8080
 ENTRYPOINT ["weir"]
 CMD ["serve"]
