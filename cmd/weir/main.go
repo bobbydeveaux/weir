@@ -313,6 +313,11 @@ func (a *app) serve([]string) error {
 	// API trusts whoever calls it, which is only safe on a trusted network.
 	adminKey := a.getenv("WEIR_ADMIN_KEY")
 	access := "API keys are required"
+	if adminKey == "" && a.getenv("WEIR_REQUIRE_ADMIN_KEY") != "" {
+		// A server that anyone can reach must never start open by accident.
+		// The container image sets this; a laptop does not.
+		return errors.New("WEIR_ADMIN_KEY is not set, and this server is set to refuse to run without one (WEIR_REQUIRE_ADMIN_KEY)")
+	}
 	if adminKey == "" {
 		access = "WARNING: no WEIR_ADMIN_KEY is set, so anyone who can reach this API can do anything"
 	}

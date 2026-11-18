@@ -61,3 +61,28 @@ func TestFromEnvRequiresDatabase(t *testing.T) {
 		t.Fatal("FromEnv succeeded with no database URL")
 	}
 }
+
+func TestTheDatabaseCanBeGivenInParts(t *testing.T) {
+	cfg, err := FromEnv(env(map[string]string{
+		"WEIR_DATABASE_HOST": "/cloudsql/project:region:instance", "WEIR_DATABASE_NAME": "weir",
+		"WEIR_DATABASE_USER": "weir", "WEIR_DATABASE_PASSWORD": `p'a ss\word`, "PORT": "9000",
+	}))
+	if err != nil {
+		t.Fatalf("FromEnv: %v", err)
+	}
+	want := `host='/cloudsql/project:region:instance' dbname='weir' user='weir' password='p\'a ss\\word'`
+	if cfg.DatabaseURL != want {
+		t.Errorf("DatabaseURL = %s\n         want %s", cfg.DatabaseURL, want)
+	}
+	if cfg.HTTPAddr != ":9000" {
+		t.Errorf("HTTPAddr = %q, want the port the platform named", cfg.HTTPAddr)
+	}
+	// One address wins over the parts, and an address of its own wins over PORT.
+	cfg, err = FromEnv(env(map[string]string{"WEIR_DATABASE_URL": "postgres://x/y", "WEIR_DATABASE_HOST": "h", "PORT": "9000", "WEIR_HTTP_ADDR": ":7000"}))
+	if err != nil || cfg.DatabaseURL != "postgres://x/y" || cfg.HTTPAddr != ":7000" {
+		t.Errorf("cfg = %+v, %v", cfg, err)
+	}
+	if _, err := FromEnv(env(nil)); err == nil || !strings.Contains(err.Error(), "WEIR_DATABASE_HOST") {
+		t.Errorf("with no database at all = %v", err)
+	}
+}
