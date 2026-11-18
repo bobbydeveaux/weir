@@ -94,7 +94,7 @@ To make one real call through the Claude command line: `WEIR_TEST_CLAUDE=1 go te
 | `WEIR_DATABASE_HOST`, `_PORT`, `_NAME`, `_USER`, `_PASSWORD`, `_SSLMODE` | The database in parts, for a platform that hands them out one at a time. Used when `WEIR_DATABASE_URL` is not set | none |
 | `PORT` | The port to listen on, where a platform sets it and `WEIR_HTTP_ADDR` is not set | none |
 | `WEIR_REQUIRE_ADMIN_KEY` | Refuse to start without `WEIR_ADMIN_KEY`. The container image sets it | not set |
-| `WEIR_AGENT_RUNNER` | Where agents run: `inline` (beside the worker), `docker` (a container each) or `kubernetes` (a Job each). See "Where agents run" below | `inline` |
+| `WEIR_AGENT_RUNNER` | Where agents run: `inline` (beside the worker), `docker` (a container each), `kubernetes` (a Job each) or `cloudrun` (a run of a Cloud Run job each). See "Where agents run" below | `inline` |
 | `WEIR_AGENT_IMAGE` | The image agents run in, for `docker`. Build it from `deploy/agent.Dockerfile` | none |
 | `WEIR_AGENT_URL` | Weir's address as an agent's container reaches it | `http://host.docker.internal` and the API's port |
 | `WEIR_AGENT_DOCKER_ARGS` | Extra arguments for `docker run`: a network, memory and CPU limits | none |
@@ -284,6 +284,7 @@ An agent that can do real work should run in a container of its own, with every 
 | `inline` (the default) | beside Weir's worker, on the same machine | use only what its step lists, inside a sandbox |
 | `docker` | in a container of its own, one per step | use every tool. The container is the boundary |
 | `kubernetes` | in a Kubernetes Job of its own, one per step | the same |
+| `cloudrun` | in a run of a Cloud Run job, one per step | the same |
 
 ```bash
 docker build -f deploy/agent.Dockerfile -t weir-agent .
@@ -314,7 +315,7 @@ Know the limits:
 - **The cost is the agent's word.** The container reports what the model call cost. Sending model calls through Weir, so that Weir counts them itself and the container holds no model credential, is not built.
 - A directory that packs to more than 30 MB cannot be sent, and neither can a result larger than that.
 - With `docker`, every `ai` step runs in a container. `decide` steps do not: they have no tools.
-- Docker and Kubernetes. Cloud Run jobs, Fargate and AgentCore are not built.
+- Docker, Kubernetes and Cloud Run jobs. Fargate and AgentCore are not built.
 
 #### On Kubernetes
 
@@ -337,6 +338,35 @@ With `WEIR_AGENT_RUNNER=kubernetes`, Weir starts each agent as a Job in the clus
 - The step's one-time token is in the Job's description, so anyone who can read Jobs in that namespace can read it while the step runs. It opens only that step.
 
 Proven on a local cluster: a real agent ran as a Job, took the model's credential from a Secret, ran as a non-root user, and the Job was removed afterwards.
+
+#### On Cloud Run
+
+With `WEIR_AGENT_RUNNER=cloudrun`, Weir starts each agent as one run of a Cloud Run job, and waits for it.
+
+You make the job once. It carries everything about an agent that Weir should not hold: the image, the service account it runs as, and the model's credential.
+
+```bash
+gcloud run jobs deploy weir-agent --region europe-west1 \
+  --image ghcr.io/bobbydeveaux/weir-agent:edge \
+  --service-account weir-agent@PROJECT.iam.gserviceaccount.com \
+  --set-secrets CLAUDE_CODE_OAUTH_TOKEN=claude-code-oauth-token:latest \
+  --cpu 2 --memory 4Gi --max-retries 0 --task-timeout 45m
+```
+
+| Setting | Meaning |
+|---|---|
+| `WEIR_AGENT_JOB` | The job's name. Required |
+| `WEIR_AGENT_URL` | Weir's own address, as the job reaches it. Required |
+| `WEIR_AGENT_PROJECT`, `WEIR_AGENT_REGION` | Where the job is. Weir's own project and region if left out |
+
+- Each run is given Weir's address and the step's one-time token, and the time the step has left. Nothing else is changed from how you made the job.
+- Weir signs in to Cloud Run as the service account it runs as, with no key. That account needs to run this one job with overrides (`run.jobs.runWithOverrides`), and to read and cancel its runs.
+- The job's own service account needs leave to call the model and nothing else. It should not be Weir's.
+- If a step runs out of time or its run is cancelled, Weir cancels the job's run.
+- What the job may reach on the network is set on the job (its VPC and egress settings).
+- The step's one-time token is in the run's description, so anyone who can view that job's runs can read it while the step runs. It opens only that step.
+
+**Not yet run against the real Cloud Run.** It is tested against a stand-in for Google's API only.
 
 ### An agent that works in a prepared directory
 

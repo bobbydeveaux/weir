@@ -301,8 +301,18 @@ func (a *app) serve([]string) error {
 			ServiceAccount: a.getenv("WEIR_AGENT_SERVICE_ACCOUNT"), CPU: a.getenv("WEIR_AGENT_CPU"), Memory: a.getenv("WEIR_AGENT_MEMORY")}
 		w.Launcher, w.Model, w.AgentURL = launcher, modelFor, a.getenv("WEIR_AGENT_URL")
 		agents = "in " + launcher.Describe()
+	case "cloudrun":
+		// The job is made once by whoever runs Weir, with its image, its own
+		// service account and the model's credential. Weir only runs it.
+		job := a.getenv("WEIR_AGENT_JOB")
+		if job == "" || a.getenv("WEIR_AGENT_URL") == "" {
+			return errors.New("WEIR_AGENT_RUNNER is cloudrun, so WEIR_AGENT_JOB (the Cloud Run job agents run as) and WEIR_AGENT_URL (Weir's own address) are both needed")
+		}
+		launcher := &worker.CloudRun{Job: job, Project: a.getenv("WEIR_AGENT_PROJECT"), Region: a.getenv("WEIR_AGENT_REGION")}
+		w.Launcher, w.Model, w.AgentURL = launcher, modelFor, a.getenv("WEIR_AGENT_URL")
+		agents = "in " + launcher.Describe()
 	default:
-		return fmt.Errorf("WEIR_AGENT_RUNNER is %q; it must be inline, docker or kubernetes", where)
+		return fmt.Errorf("WEIR_AGENT_RUNNER is %q; it must be inline, docker, kubernetes or cloudrun", where)
 	}
 
 	// Files are kept in Postgres unless a bucket is named.
