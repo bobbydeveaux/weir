@@ -199,7 +199,7 @@ How work is claimed, held and returned.
 - [x] Poll mode: repeat until a declared condition holds
 - [x] A fake third party for tests
 - [x] Credentials on a connection, held by reference and never stored: `env:NAME` and `file:name`, sent as a bearer token, a header or basic auth, on every call made through the connection (external steps, files, tools, hooks, MCP). A workspace can name only its own secrets. Tested against stand-in servers; not yet used against a real third party (#17)
-- [ ] An ID token from the machine's own identity as a connection credential, for one cloud service calling another with no secret at all (#18)
+- [x] An ID token from the machine's own identity as a connection credential (`id-token`), for one cloud service calling another with no secret at all. Google Cloud only, and off unless `WEIR_ID_TOKENS=google`; not AWS or Azure, and not limited by workspace (#18)
 - [ ] Allowed addresses for connections, so that a workspace cannot point Weir at anything it can reach (#19)
 
 ### 9. The AI gateway and decide steps

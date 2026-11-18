@@ -13,6 +13,7 @@
 package secrets
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -33,12 +34,17 @@ const (
 	// key, and is never sent anywhere: it signs a request for a short-lived
 	// token for one repository. Only the GitHub tools can use it.
 	GitHubApp = "github-app"
+	// IDToken signs in with the server's own identity: a short-lived token
+	// the platform signs, naming the server and the one address it is for.
+	// There is no secret. The other side must check the token and decide
+	// whether it trusts this server.
+	IDToken = "id-token"
 )
 
 // Auth says how to sign in to a connection. It holds a reference to the
 // secret, never the secret.
 type Auth struct {
-	// Kind is none, bearer, header or basic. Empty means none.
+	// Kind is none, bearer, header, basic, github-app or id-token. Empty means none.
 	Kind string `json:"kind"`
 	// Secret is the reference: env:NAME or file:name.
 	Secret string `json:"secret,omitempty"`
@@ -83,8 +89,13 @@ func (a Auth) Check() error {
 		if !appName.MatchString(a.App) {
 			return errors.New("auth of kind github-app needs app: the App's client id or App id, from its settings page on GitHub")
 		}
+	case IDToken:
+		if a.Secret != "" || a.Header != "" || a.Username != "" || a.App != "" {
+			return errors.New("auth of kind id-token takes no secret: the server signs in as itself")
+		}
+		return nil
 	default:
-		return fmt.Errorf("auth kind %q is not one of none, bearer, header, basic, github-app", a.Kind)
+		return fmt.Errorf("auth kind %q is not one of none, bearer, header, basic, github-app, id-token", a.Kind)
 	}
 	return CheckRef(a.Secret)
 }
@@ -114,6 +125,9 @@ type Resolver struct {
 	// Dir is the directory that holds one directory of secret files per
 	// workspace. Empty means file: references cannot be used.
 	Dir string
+	// IDToken asks the platform for a token that says who this server is,
+	// for one address. Nil means connections of kind id-token cannot be used.
+	IDToken func(ctx context.Context, audience string) (string, error)
 }
 
 // FromEnv returns a Resolver that reads this process's environment, with the
@@ -122,7 +136,13 @@ func FromEnv(getenv func(string) string) *Resolver {
 	if getenv == nil {
 		getenv = os.Getenv
 	}
-	return &Resolver{Getenv: getenv, Dir: getenv("WEIR_SECRETS_DIR")}
+	r := &Resolver{Getenv: getenv, Dir: getenv("WEIR_SECRETS_DIR")}
+	// Off unless asked for: with it on, any workspace can make this server
+	// say who it is to an address of the workspace's choosing.
+	if getenv("WEIR_ID_TOKENS") == "google" {
+		r.IDToken = GoogleIDTokens(nil)
+	}
+	return r
 }
 
 // Where says where the value of ref is looked for, for a workspace: the name
@@ -187,6 +207,19 @@ func (r *Resolver) Apply(req *http.Request, workspace string, a Auth) error {
 	if a.Kind == GitHubApp {
 		// The App's key signs requests for tokens; it is not itself sent.
 		return errors.New("it signs in as a GitHub App, which only the GitHub tools can use")
+	}
+	if a.Kind == IDToken {
+		if r.IDToken == nil {
+			return errors.New("it signs in as this server, which this server is not set to do: set WEIR_ID_TOKENS=google on a server running on Google Cloud")
+		}
+		// The token is for this one address, so the other side can refuse a
+		// token made for anyone else.
+		token, err := r.IDToken(req.Context(), req.URL.Scheme+"://"+req.URL.Host)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		return nil
 	}
 	value, err := r.Resolve(workspace, a.Secret)
 	if err != nil {

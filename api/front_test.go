@@ -111,3 +111,28 @@ func TestBehindASignInProxy(t *testing.T) {
 		t.Errorf("a server with no console served one: %d %q", code, body)
 	}
 }
+
+func TestAConnectionCanSignInAsTheServer(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	pool := testdb.New(ctx, t)
+	eng, err := engine.New(ctx, pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := worker.NewRegistry()
+	srv := httptest.NewServer(api.New(eng, reg))
+	defer srv.Close()
+
+	who := map[string]string{"X-Weir-Actor": "lead", "Content-Type": "application/json"}
+	if code, body := ask(t, "PUT", srv.URL+"/v1/connections/my-app", `{"base_url":"https://my-app.example.com","auth":{"kind":"id-token"}}`, who); code >= 300 {
+		t.Fatalf("a connection that signs in as the server = %d %s", code, body)
+	}
+	if code, body := ask(t, "GET", srv.URL+"/v1/connections", "", nil); code != http.StatusOK || !strings.Contains(body, `"kind": "id-token"`) && !strings.Contains(body, `"kind":"id-token"`) {
+		t.Errorf("the connection as listed = %d %s, want its kind shown", code, body)
+	}
+	// It has no secret, so naming one is a mistake to refuse.
+	if code, _ := ask(t, "PUT", srv.URL+"/v1/connections/other", `{"base_url":"https://other.example.com","auth":{"kind":"id-token","secret":"env:TOKEN"}}`, who); code != http.StatusBadRequest {
+		t.Errorf("an id-token connection with a secret = %d, want 400", code)
+	}
+}
