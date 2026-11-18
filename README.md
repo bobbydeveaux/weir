@@ -91,6 +91,9 @@ To make one real call through the Claude command line: `WEIR_TEST_CLAUDE=1 go te
 | `WEIR_CLAUDE_MODEL_PREFIX` | Put in front of a model name that begins `claude-`, such as `eu.anthropic.` for Bedrock | none |
 | `WEIR_TYPESAFE_URL`, `WEIR_GEMINI_API_URL` | A different address for Jev or Gemini Decisions, to go through a gateway or proxy | each service's own |
 | `WEIR_BLOB_URL` | Where files are kept: `s3://bucket?region=…`, `gs://bucket`, `azblob://container` or `file:///directory`. See "Where files are kept" below | in Postgres |
+| `WEIR_DATABASE_HOST`, `_PORT`, `_NAME`, `_USER`, `_PASSWORD`, `_SSLMODE` | The database in parts, for a platform that hands them out one at a time. Used when `WEIR_DATABASE_URL` is not set | none |
+| `PORT` | The port to listen on, where a platform sets it and `WEIR_HTTP_ADDR` is not set | none |
+| `WEIR_REQUIRE_ADMIN_KEY` | Refuse to start without `WEIR_ADMIN_KEY`. The container image sets it | not set |
 | `WEIR_AGENT_RUNNER` | Where agents run: `inline` (beside the worker) or `docker` (a container each). See "Where agents run" below | `inline` |
 | `WEIR_AGENT_IMAGE` | The image agents run in, for `docker`. Build it from `deploy/agent.Dockerfile` | none |
 | `WEIR_AGENT_URL` | Weir's address as an agent's container reaches it | `http://host.docker.internal` and the API's port |
@@ -101,6 +104,17 @@ To make one real call through the Claude command line: `WEIR_TEST_CLAUDE=1 go te
 | `WEIR_CODEX_MODEL` | Model for steps with `tier: codex`, which run through the Codex command line | Codex's default |
 
 The `cli` runner keeps the command line's permission checks on, offers it no built-in tools, ignores user and project settings, and passes it a short list of environment variables rather than the worker's own.
+
+### In a container
+
+```bash
+docker compose --profile weir up        # Postgres and Weir, built from this checkout
+curl localhost:8080/v1/workspaces -H 'Authorization: Bearer local-admin-key'
+```
+
+Two images are published: `ghcr.io/bobbydeveaux/weir` (the server) and `ghcr.io/bobbydeveaux/weir-agent` (what an agent runs in). `edge` is the latest commit on `main`. The server image refuses to start without `WEIR_ADMIN_KEY`, so that a server on a network is never open by accident.
+
+To run Weir on a platform of your own, start from the image in a small repository of your own: [docs/deploy/your-own-platform.md](docs/deploy/your-own-platform.md).
 
 ### Access
 

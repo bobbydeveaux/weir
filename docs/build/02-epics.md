@@ -311,7 +311,7 @@ A Pipe is one package per third party: its connection, the events it sends in, t
 
 Weir is designed to idle at zero. Today a worker polls, so one instance must stay warm.
 
-- [ ] A container image, and `docker compose up` starting Weir itself, not only Postgres (#55)
+- [x] A container image for the server (`deploy/Dockerfile`), published with the agent image to `ghcr.io` on every push to `main` and every version tag; `docker compose --profile weir up` starts Weir itself. The image refuses to start without an admin key. The database can be given in parts and the port taken from `PORT`, for a platform that sets those. [How to run it on a platform of your own](../deploy/your-own-platform.md). Not built: the console is not in the image (#55)
 - [ ] Work started by the request that causes it (an event, a decision, a callback), so that nothing needs to poll (#56)
 - [ ] Timers and retries fired by a scheduler calling Weir (Cloud Scheduler or Cloud Tasks first) (#57)
 - [ ] Long agent steps run off the request, so that a platform's request time limit does not cut them short (#58)

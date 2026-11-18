@@ -1,4 +1,10 @@
-# Local development: Postgres only. The engine runs on your machine with `go run`.
+# Local development.
+#
+#   docker compose up -d --wait            Postgres only; run the engine with `go run`
+#   docker compose --profile weir up       Postgres and Weir itself, built from this checkout
+#
+# With the second, Weir listens on http://localhost:8080 and its admin key is
+# "local-admin-key". That key is for a laptop and nowhere else.
 services:
   postgres:
     image: postgres:17
@@ -16,6 +22,24 @@ services:
       retries: 30
     volumes:
       - weir-postgres:/var/lib/postgresql/data
+
+  migrate:
+    profiles: [weir]
+    build: { context: ., dockerfile: deploy/Dockerfile }
+    command: [migrate]
+    environment: &weir-env
+      WEIR_DATABASE_URL: postgres://weir:weir@postgres:5432/weir?sslmode=disable
+      WEIR_ADMIN_KEY: local-admin-key
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  weir:
+    profiles: [weir]
+    build: { context: ., dockerfile: deploy/Dockerfile }
+    environment: *weir-env
+    ports: ["8080:8080"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
 
 volumes:
   weir-postgres:

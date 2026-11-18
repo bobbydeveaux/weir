@@ -1,12 +1,15 @@
 DATABASE_URL ?= postgres://weir:weir@localhost:54329/weir?sslmode=disable
 
-.PHONY: help up down migrate build test test-db fmt vet check
+.PHONY: help up down run migrate build test test-db fmt vet check
 
 help: ## Show this help
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
 
 up: ## Start Postgres and wait until it is ready
 	docker compose up -d --wait
+
+run: ## Start Postgres and Weir itself, in containers
+	docker compose --profile weir up --build
 
 down: ## Stop Postgres (data is kept)
 	docker compose down

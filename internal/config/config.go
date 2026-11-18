@@ -36,8 +36,11 @@ const (
 // FromEnv builds a Config from environment variables, read through getenv so
 // that tests can supply their own values.
 //
-//	WEIR_DATABASE_URL  required
-//	WEIR_HTTP_ADDR     optional, default ":8080"
+//	WEIR_DATABASE_URL  the database, as one address; or, for a platform that
+//	                   hands out the parts, WEIR_DATABASE_HOST with _PORT,
+//	                   _NAME, _USER and _PASSWORD. One of the two is required
+//	WEIR_HTTP_ADDR     optional, default ":8080", or the port in PORT if a
+//	                   platform sets that
 //	WEIR_RUNNER        optional, one of cli, api or fake; default "cli"
 func FromEnv(getenv func(string) string) (Config, error) {
 	cfg := Config{
@@ -46,7 +49,13 @@ func FromEnv(getenv func(string) string) (Config, error) {
 		Runner:      Runner(strings.ToLower(strings.TrimSpace(getenv("WEIR_RUNNER")))),
 	}
 	if cfg.DatabaseURL == "" {
-		return Config{}, fmt.Errorf("WEIR_DATABASE_URL is not set")
+		cfg.DatabaseURL = databaseFromParts(getenv)
+	}
+	if cfg.DatabaseURL == "" {
+		return Config{}, fmt.Errorf("WEIR_DATABASE_URL is not set, and neither is WEIR_DATABASE_HOST")
+	}
+	if port := strings.TrimSpace(getenv("PORT")); cfg.HTTPAddr == "" && port != "" {
+		cfg.HTTPAddr = ":" + port // Cloud Run and others say which port to listen on
 	}
 	if cfg.HTTPAddr == "" {
 		cfg.HTTPAddr = defaultHTTPAddr
@@ -60,4 +69,29 @@ func FromEnv(getenv func(string) string) (Config, error) {
 		return Config{}, fmt.Errorf("WEIR_RUNNER is %q; it must be cli, api or fake", cfg.Runner)
 	}
 	return cfg, nil
+}
+
+// databaseFromParts builds a connection string from separate settings, for a
+// platform that gives the host, user and password one at a time. The host may
+// be a directory holding a socket, as Cloud SQL's is. It returns "" when no
+// host is set.
+func databaseFromParts(getenv func(string) string) string {
+	host := strings.TrimSpace(getenv("WEIR_DATABASE_HOST"))
+	if host == "" {
+		return ""
+	}
+	// Each value is quoted, so that a password may hold any character.
+	quote := func(v string) string {
+		return "'" + strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(v) + "'"
+	}
+	parts := []string{"host=" + quote(host)}
+	for _, p := range []struct{ key, env string }{
+		{"port", "WEIR_DATABASE_PORT"}, {"dbname", "WEIR_DATABASE_NAME"},
+		{"user", "WEIR_DATABASE_USER"}, {"password", "WEIR_DATABASE_PASSWORD"}, {"sslmode", "WEIR_DATABASE_SSLMODE"},
+	} {
+		if v := getenv(p.env); v != "" {
+			parts = append(parts, p.key+"="+quote(v))
+		}
+	}
+	return strings.Join(parts, " ")
 }
