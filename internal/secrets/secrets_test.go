@@ -129,3 +129,55 @@ func TestACredentialIsNotFollowedToAnotherHost(t *testing.T) {
 		t.Errorf("status %d, and the other host received %q", resp.StatusCode, got)
 	}
 }
+
+func TestAnIDTokenSignsInAsTheServerWithNoSecret(t *testing.T) {
+	// A stand-in for the platform, which signs a token for the address asked for.
+	var asked []string
+	platform := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Metadata-Flavor") != "Google" {
+			http.Error(w, "missing header", http.StatusForbidden)
+			return
+		}
+		asked = append(asked, r.URL.Query().Get("audience"))
+		_, _ = w.Write([]byte("token-for-" + r.URL.Query().Get("audience") + "\n"))
+	}))
+	defer platform.Close()
+	old := googleMetadata
+	googleMetadata = platform.URL
+	defer func() { googleMetadata = old }()
+
+	auth := Auth{Kind: IDToken}
+	if err := auth.Check(); err != nil {
+		t.Fatalf("an id-token connection with no secret was refused: %v", err)
+	}
+	if err := (Auth{Kind: IDToken, Secret: "env:SOMETHING"}).Check(); err == nil {
+		t.Error("an id-token connection with a secret was accepted")
+	}
+
+	// A server not set to sign in as itself sends nothing.
+	req, _ := http.NewRequest("POST", "https://app.example.com/hooks/weir?x=1", nil)
+	off := FromEnv(func(string) string { return "" })
+	if err := off.Apply(req, "acme", auth); err == nil || !strings.Contains(err.Error(), "WEIR_ID_TOKENS") || req.Header.Get("Authorization") != "" {
+		t.Errorf("with ID tokens off: err = %v, Authorization = %q; want an error naming the setting, and nothing sent", err, req.Header.Get("Authorization"))
+	}
+
+	// One set to asks for a token for the address being called, and no more.
+	on := FromEnv(func(name string) string {
+		if name == "WEIR_ID_TOKENS" {
+			return "google"
+		}
+		return ""
+	})
+	for range 2 {
+		req, _ = http.NewRequest("POST", "https://app.example.com/hooks/weir?x=1", nil)
+		if err := on.Apply(req, "acme", auth); err != nil {
+			t.Fatal(err)
+		}
+		if got := req.Header.Get("Authorization"); got != "Bearer token-for-https://app.example.com" {
+			t.Errorf("Authorization = %q, want a token for the address called", got)
+		}
+	}
+	if len(asked) != 1 || asked[0] != "https://app.example.com" {
+		t.Errorf("the platform was asked %v, want once, for https://app.example.com", asked)
+	}
+}

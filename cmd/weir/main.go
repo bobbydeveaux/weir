@@ -81,6 +81,7 @@ Environment:
   WEIR_API_PREFIX    A path the API also answers under, such as /api, for a proxy that needs one
   WEIR_BLOB_URL      Where files are kept: s3://bucket, gs://bucket, azblob://container or
                      file:///directory (default: in Postgres)
+  WEIR_ID_TOKENS     google: let a connection of kind id-token sign in as this server (Google Cloud only)
   WEIR_SECRETS_DIR   Directory of secret files, one directory per workspace, for file: references
   WEIR_SECRET__<WORKSPACE>__<NAME>
                      The value of a connection's secret named env:<NAME> in that workspace
@@ -464,7 +465,7 @@ func (a *app) template(args []string) error {
 func (a *app) connection(args []string) error {
 	fs, _ := a.flags("connection")
 	workspace := fs.String("workspace", "default", "the workspace the connection belongs to")
-	kind := fs.String("auth", "", "how to sign in: bearer, header, basic or github-app")
+	kind := fs.String("auth", "", "how to sign in: bearer, header, basic, github-app or id-token")
 	secret := fs.String("secret", "", "the secret to sign in with, by reference: env:NAME or file:name")
 	header := fs.String("header", "", "the header to send, for --auth header")
 	username := fs.String("username", "", "the user name, for --auth basic")

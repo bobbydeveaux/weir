@@ -175,6 +175,16 @@ weir connection github https://api.github.com --workspace my-app --auth bearer -
 | `header` | `<header>: <secret>`, with `--header X-Api-Key` |
 | `basic` | `Authorization: Basic …`, with `--username` |
 | `github-app` | Nothing. The secret is a GitHub App's private key, which signs requests for short-lived tokens. See "Signing in as a GitHub App" |
+| `id-token` | `Authorization: Bearer <token>`, where the token is the server's own identity: see below |
+
+**Signing in as the server itself.** On Google Cloud, a connection of kind `id-token` has no secret at all. For each call Weir asks the platform for a short-lived ID token that names the server's service account and the address being called, and sends that. The other side checks the token's signature, that it is for its own address, and that it trusts that account.
+
+```bash
+export WEIR_ID_TOKENS=google       # on the Weir server; off unless set
+weir connection my-app https://my-app.example.com --workspace my-app --auth id-token
+```
+
+It is off unless set, because with it on any workspace can make the server say who it is to an address of that workspace's choosing. Turn it on where every workspace is yours. Not yet: AWS and Azure identities, and limiting which workspaces may use it.
 
 A secret is named in one of two ways, and a workspace can name only its own:
 
