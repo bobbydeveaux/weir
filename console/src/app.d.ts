@@ -11,6 +11,11 @@ declare global {
 
 	/** Where the dev and preview servers proxy /v1 to. Set in vite.config.ts. */
 	const __WEIR_PROXY_TARGET__: string;
+
+	interface ImportMetaEnv {
+		/** Where the API is, when it is not at /v1. */
+		readonly VITE_WEIR_API_BASE?: string;
+	}
 }
 
 export {};

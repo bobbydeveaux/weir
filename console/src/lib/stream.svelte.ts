@@ -7,6 +7,7 @@
 // because EventSource cannot send headers, and the API key and the workspace
 // travel in headers.
 
+import { API_BASE } from './api';
 import { session } from './session.svelte';
 
 /** How long to wait before reconnecting after the stream drops. */
@@ -40,7 +41,7 @@ export function useStream(path: () => string | null, onMove: () => void): void {
 			if (key) headers['Authorization'] = `Bearer ${key}`;
 			if (last) headers['Last-Event-ID'] = last;
 			try {
-				const res = await fetch(`/v1${p}`, { headers, signal: stop.signal });
+				const res = await fetch(`${API_BASE}${p}?workspace=${encodeURIComponent(workspace)}`, { headers, signal: stop.signal });
 				if (!res.ok || !res.body) throw new Error(`stream answered ${res.status}`);
 				const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
 				let buffer = '';

@@ -119,6 +119,8 @@ curl localhost:8080/v1/workspaces -H 'Authorization: Bearer local-admin-key'
 
 Two images are published: `ghcr.io/bobbydeveaux/weir` (the server) and `ghcr.io/bobbydeveaux/weir-agent` (what an agent runs in). `edge` is the latest commit on `main`. If a pull is refused, build the image yourself from `deploy/`: it needs nothing but this repository. The server image refuses to start without `WEIR_ADMIN_KEY`, so that a server on a network is never open by accident.
 
+The server image holds the console too, and serves it at every address that is not the API's: open `http://localhost:8080`. Outside the image, build the console (`cd console && npm run build`) and point `WEIR_CONSOLE_DIR` at `console/build`.
+
 On Kubernetes, there is a Helm chart: [deploy/helm/weir](deploy/helm/weir/README.md). It runs the server, migrates the database before each release, and lets Weir start each agent as a Job of its own.
 
 To run Weir on a platform of your own, start from the image, or the chart, in a small repository of your own: [docs/deploy/your-own-platform.md](docs/deploy/your-own-platform.md).
@@ -139,7 +141,20 @@ curl $WEIR/v1/runs -H "Authorization: Bearer weir_3f9c…"
 - A key acts as itself: its name is the actor on everything it does. A key made with `--act-as` may name the person it is acting for in `X-Weir-Actor`, which is for an application with its own sign-in.
 - Callbacks and an agent's tool calls carry a one-time token for a single attempt and need no key.
 
-Not yet: sign-in for people.
+#### Behind a sign-in proxy
+
+Weir has no sign-in of its own yet. Where a proxy in front of it signs people in (Google's Identity-Aware Proxy, oauth2-proxy and the like), tell Weir which header the proxy puts the person's address in:
+
+```bash
+export WEIR_PROXY_USER_HEADER=X-Goog-Authenticated-User-Email
+```
+
+- A request with that header needs no key. The person may do anything, in any workspace, and their address is the actor on everything they do. The console shows who is signed in, and asks for neither a key nor a name.
+- **This is only safe where nothing but the proxy can reach the server.** Anyone who can reach it directly can write the header themselves. Weir does not check a signature on it.
+- Keys go on working beside it, for callers that are not people. If those callers come from outside, run a second copy of the server for them, on the same database and without this setting.
+- `WEIR_API_PREFIX=/api` makes the API answer under `/api/v1` as well, for a proxy that only passes on addresses under a path of its own. Build the console for it with `VITE_WEIR_API_BASE=/api/v1 npm run build`.
+
+Not yet: sign-in of Weir's own, roles for people, and checking the proxy's signature.
 
 ### Credentials for connections
 

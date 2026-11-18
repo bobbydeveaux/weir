@@ -1,5 +1,6 @@
 // The one place the console talks to the Weir API. Every call goes to the
-// relative path /v1 and carries the workspace and, for writes, the actor.
+// relative path /v1 (or wherever the build was told the API is) and carries
+// the workspace and, for writes, the actor.
 
 import { health, session } from './session.svelte';
 import type {
@@ -22,7 +23,21 @@ import type {
 	Workspace
 } from './types';
 
-export const API_BASE = '/v1';
+/**
+ * Where the API is, relative to the console. A build for a proxy that only
+ * passes on addresses under a path of its own sets VITE_WEIR_API_BASE, for
+ * example to /api/v1.
+ */
+export const API_BASE: string = import.meta.env.VITE_WEIR_API_BASE || '/v1';
+
+/** Who the server takes the caller to be. */
+export interface Me {
+	name: string;
+	role: string;
+	workspace: string;
+	/** True when a sign-in proxy vouched for the caller, so no key or name is needed. */
+	signed_in: boolean;
+}
 
 export class ApiError extends Error {
 	/** HTTP status, or 0 when no response arrived or the request was never sent. */
@@ -63,7 +78,9 @@ function absolute(path: string): string {
  * do this, because it cannot carry the workspace or the API key.
  */
 async function download(path: string, name: string): Promise<void> {
-	const url = API_BASE + path;
+	// The workspace goes in the address as well as in a header, because some
+	// proxies pass on only the headers they know.
+	const url = `${API_BASE}${path}?workspace=${encodeURIComponent(session.workspace || 'default')}`;
 	const headers: Record<string, string> = { 'X-Weir-Workspace': session.workspace || 'default' };
 	if (session.key) headers['Authorization'] = `Bearer ${session.key}`;
 	let res: Response;
@@ -85,6 +102,9 @@ async function request<T>(method: string, path: string, opts: Options = {}): Pro
 	for (const [k, v] of Object.entries(opts.query ?? {})) {
 		if (v !== undefined && v !== null && v !== '' && v !== 0) params.set(k, String(v));
 	}
+	// The workspace goes in the address as well as in a header, because some
+	// proxies pass on only the headers they know.
+	if (opts.scoped !== false) params.set('workspace', session.workspace || 'default');
 	const qs = params.toString();
 	const url = API_BASE + path + (qs ? '?' + qs : '');
 
@@ -161,6 +181,7 @@ export const api = {
 	// Workspaces are not themselves inside a workspace, so these two calls do
 	// not send the workspace header: a stale choice must not break the switcher.
 	workspaces: () => request<Workspace[] | null>('GET', '/workspaces', { scoped: false }).then((w) => w ?? []),
+	me: () => request<Me>('GET', '/me', { scoped: false }),
 	createWorkspace: (slug: string, name: string) =>
 		request<{ slug: string }>('POST', '/workspaces', { body: { slug, name }, write: true, scoped: false }),
 
