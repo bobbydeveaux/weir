@@ -13,13 +13,17 @@
 # Build it from the repository's root:
 #
 #   docker build -f deploy/agent.Dockerfile -t weir-agent .
-FROM golang:1.26-bookworm AS build
+# The program is built on the machine doing the build and for the machine it
+# will run on, so that an image for another kind of processor is not built
+# under emulation.
+FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS build
+ARG TARGETOS TARGETARCH
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 # The agent's program needs no bucket libraries: it talks only to Weir's API.
-RUN CGO_ENABLED=0 go build -tags nobuckets -trimpath -ldflags "-s -w" -o /out/weir ./cmd/weir
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -tags nobuckets -trimpath -ldflags "-s -w" -o /out/weir ./cmd/weir
 
 FROM node:22-bookworm-slim
 RUN apt-get update \
@@ -30,8 +34,10 @@ RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" && npm cac
 COPY --from=build /out/weir /usr/local/bin/weir
 # The agent is not root: it can do what it likes to its own directory and
 # home, and nothing to the image.
-RUN useradd --create-home --shell /bin/bash agent
-USER agent
+# The user is given by number, which is what a cluster needs to see to know
+# the container does not run as root.
+RUN useradd --uid 10001 --create-home --shell /bin/bash agent
+USER 10001
 WORKDIR /home/agent
 ENV HOME=/home/agent
 CMD ["weir", "agent"]

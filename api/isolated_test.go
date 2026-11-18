@@ -246,16 +246,20 @@ func (failing) Run(context.Context, runner.RunRequest) (runner.RunResult, error)
 	return runner.RunResult{}, errors.New("the worker's own runner was used")
 }
 
-// TestAnAgentRunsInADockerContainerLive starts a real container for a step.
-// It runs only when asked:
+// TestAnAgentRunsInItsOwnContainerLive starts a real container for a step,
+// with Docker or, when WEIR_TEST_KUBE_API is set, as a Kubernetes Job. It
+// runs only when asked:
 //
 //	WEIR_TEST_AGENT_IMAGE      the image, built from deploy/agent.Dockerfile
 //	CLAUDE_CODE_OAUTH_TOKEN    optional; with it the agent really runs
+//	WEIR_TEST_KUBE_API         the Kubernetes API, such as "kubectl proxy" gives
+//	WEIR_TEST_KUBE_NAMESPACE   the namespace for the Job
+//	WEIR_TEST_KUBE_SECRET      a Secret there holding the model's credential
 //
 // Without a credential for the model the agent cannot sign in, and the test
 // checks that the container still fetched its job and sent that back as its
 // result, which proves everything but the model call.
-func TestAnAgentRunsInADockerContainerLive(t *testing.T) {
+func TestAnAgentRunsInItsOwnContainerLive(t *testing.T) {
 	image := os.Getenv("WEIR_TEST_AGENT_IMAGE")
 	if image == "" {
 		t.Skip("set WEIR_TEST_AGENT_IMAGE to start a real container")
@@ -295,9 +299,16 @@ func TestAnAgentRunsInADockerContainerLive(t *testing.T) {
 	}
 	// The container reaches this machine by a name, not by "localhost".
 	address := strings.Replace(srv.URL, "127.0.0.1", "host.docker.internal", 1)
+	var launcher worker.Launcher = &worker.Docker{Image: image, Env: []string{"CLAUDE_CODE_OAUTH_TOKEN"}}
+	if api := os.Getenv("WEIR_TEST_KUBE_API"); api != "" {
+		// As a Kubernetes Job instead. WEIR_TEST_KUBE_API is the API's address
+		// (for example what "kubectl proxy" prints), and the Secret named
+		// holds the model's credential.
+		launcher = &worker.Kubernetes{Image: image, API: api, Namespace: os.Getenv("WEIR_TEST_KUBE_NAMESPACE"),
+			Secret: os.Getenv("WEIR_TEST_KUBE_SECRET"), CPU: "1", Memory: "1Gi"}
+	}
 	w := &worker.Worker{Engine: eng, Handlers: reg, Runner: failing{}, AgentURL: address,
-		Launcher: &worker.Docker{Image: image, Env: []string{"CLAUDE_CODE_OAUTH_TOKEN"}},
-		Model:    func(string, string) string { return "haiku" }}
+		Launcher: launcher, Model: func(string, string) string { return "haiku" }}
 	if _, err := w.RunOnce(ctx); err != nil {
 		t.Fatal(err)
 	}

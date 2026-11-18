@@ -290,8 +290,19 @@ func (a *app) serve([]string) error {
 			w.AgentURL = "http://host.docker.internal" + cfg.HTTPAddr
 		}
 		agents = "in " + launcher.Describe()
+	case "kubernetes":
+		image := a.getenv("WEIR_AGENT_IMAGE")
+		if image == "" || a.getenv("WEIR_AGENT_URL") == "" {
+			return errors.New("WEIR_AGENT_RUNNER is kubernetes, so WEIR_AGENT_IMAGE (the image agents run in) and WEIR_AGENT_URL (Weir's address inside the cluster) are both needed")
+		}
+		// The model's credential reaches an agent's pod from a Secret named
+		// here. Weir itself never reads it.
+		launcher := &worker.Kubernetes{Image: image, Namespace: a.getenv("WEIR_AGENT_NAMESPACE"), Secret: a.getenv("WEIR_AGENT_SECRET"),
+			ServiceAccount: a.getenv("WEIR_AGENT_SERVICE_ACCOUNT"), CPU: a.getenv("WEIR_AGENT_CPU"), Memory: a.getenv("WEIR_AGENT_MEMORY")}
+		w.Launcher, w.Model, w.AgentURL = launcher, modelFor, a.getenv("WEIR_AGENT_URL")
+		agents = "in " + launcher.Describe()
 	default:
-		return fmt.Errorf("WEIR_AGENT_RUNNER is %q; it must be inline or docker", where)
+		return fmt.Errorf("WEIR_AGENT_RUNNER is %q; it must be inline, docker or kubernetes", where)
 	}
 
 	// Files are kept in Postgres unless a bucket is named.
