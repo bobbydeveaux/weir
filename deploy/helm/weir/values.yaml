@@ -24,9 +24,15 @@ existingSecret: ""
 env: {}
 #  WEIR_PUBLIC_URL: https://weir.example.com
 
-# Run "weir migrate" before each install and upgrade.
+# Bringing the database up to date with "weir migrate".
 migrate:
   enabled: true
+  # before: in a Job that runs before each install and upgrade. A failed
+  #         migration stops the release. The Secret must already exist.
+  # start:  in the server's pod, before the server starts. Choose this when
+  #         something fills the Secret in after the release is installed, such
+  #         as External Secrets Operator.
+  when: before
 
 # Where agents run. With "kubernetes", each agent step is a Job in this
 # cluster, and the chart gives Weir's service account leave to manage Jobs.

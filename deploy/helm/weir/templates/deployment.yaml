@@ -20,6 +20,19 @@ spec:
       {{- end }}
       securityContext:
         runAsNonRoot: true
+      {{- if and .Values.migrate.enabled (eq .Values.migrate.when "start") }}
+      # The database is brought up to date before the server starts. Two pods
+      # starting together take turns: the migration holds a lock.
+      initContainers:
+        - name: migrate
+          image: {{ include "weir.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["migrate"]
+          {{- include "weir.env" . | nindent 10 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+      {{- end }}
       containers:
         - name: weir
           image: {{ include "weir.image" . }}

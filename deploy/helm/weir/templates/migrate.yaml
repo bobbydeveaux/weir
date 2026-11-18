@@ -1,4 +1,4 @@
-{{- if .Values.migrate.enabled }}
+{{- if and .Values.migrate.enabled (eq .Values.migrate.when "before") }}
 # Brings the database up to the version this release needs, before the new
 # server starts. A failed migration stops the install or upgrade.
 apiVersion: batch/v1

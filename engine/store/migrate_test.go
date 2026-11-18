@@ -3,7 +3,10 @@ package store
 import (
 	"context"
 	"database/sql"
+	"fmt"
+	"net/url"
 	"os"
+	"sync"
 	"testing"
 	"time"
 )
@@ -53,5 +56,50 @@ func TestMigrateCreatesTheDefaultWorkspace(t *testing.T) {
 	}
 	if slug != "default" {
 		t.Fatalf("workspace slug = %q, want default", slug)
+	}
+}
+
+// Several servers starting at once all migrate. They must take turns. This
+// passes without the lock too, on a quiet machine: the lock is what makes it
+// a guarantee, and this shows that taking it does not get in the way.
+func TestMigrationsStartedTogetherTakeTurns(t *testing.T) {
+	base := testDatabaseURL(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	admin, err := sql.Open("pgx", base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	// A database of its own, with nothing in it.
+	name := fmt.Sprintf("weir_migrate_%d", time.Now().UnixNano())
+	if _, err := admin.ExecContext(ctx, "CREATE DATABASE "+name); err != nil {
+		t.Fatalf("create database: %v", err)
+	}
+	t.Cleanup(func() { _, _ = admin.Exec("DROP DATABASE IF EXISTS " + name + " WITH (FORCE)") })
+	parsed, err := url.Parse(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed.Path = "/" + name
+
+	var wg sync.WaitGroup
+	errs := make([]error, 5)
+	versions := make([]int64, 5)
+	for i := range errs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			versions[i], errs[i] = Migrate(ctx, parsed.String())
+		}()
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("migration %d: %v", i, err)
+		}
+		if versions[i] != versions[0] {
+			t.Errorf("migration %d ended on version %d, and the first on %d", i, versions[i], versions[0])
+		}
 	}
 }

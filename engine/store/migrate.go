@@ -10,6 +10,7 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib" // registers the "pgx" database/sql driver
 	"github.com/pressly/goose/v3"
+	"github.com/pressly/goose/v3/lock"
 )
 
 //go:embed migrations/*.sql
@@ -32,7 +33,14 @@ func Migrate(ctx context.Context, databaseURL string) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("read embedded migrations: %w", err)
 	}
-	provider, err := goose.NewProvider(goose.DialectPostgres, db, files)
+	// A lock held for the length of the migration, so that two servers
+	// starting together take turns instead of both making the same table.
+	// It asks for the lock once a second, for up to five minutes.
+	locker, err := lock.NewPostgresSessionLocker(lock.WithLockTimeout(1, 300))
+	if err != nil {
+		return 0, fmt.Errorf("prepare migrations: %w", err)
+	}
+	provider, err := goose.NewProvider(goose.DialectPostgres, db, files, goose.WithSessionLocker(locker))
 	if err != nil {
 		return 0, fmt.Errorf("prepare migrations: %w", err)
 	}
