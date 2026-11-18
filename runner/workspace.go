@@ -19,6 +19,8 @@ import (
 type Workspace struct {
 	// Prepare fills dir, which is new and empty.
 	Prepare func(ctx context.Context, dir string) (Prepared, error)
+	// Discard says that nothing the agent changes is kept.
+	Discard bool
 }
 
 // Prepared says what a prepared directory holds.

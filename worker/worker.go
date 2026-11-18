@@ -442,7 +442,7 @@ func (w *Worker) ai(ctx context.Context, work *engine.Work) error {
 	system, prompt := render(work.Template, work.Input)
 	req := runner.RunRequest{Step: st.ID, System: system, Prompt: prompt, Tier: st.Tier}
 	if work.Template != nil {
-		req.Model = work.Template.Model
+		req.Model, req.Effort = work.Template.Model, work.Template.Effort
 	}
 	if st.Output != nil {
 		req.Schema, _ = json.Marshal(st.Output.Schema)
@@ -482,7 +482,7 @@ func (w *Worker) ai(ctx context.Context, work *engine.Work) error {
 		call := Call{Input: work.Input, IdempotencyKey: work.IdempotencyKey, RunID: work.RunID, Step: st.ID}
 		req.Workspace = &runner.Workspace{Prepare: func(ctx context.Context, dir string) (runner.Prepared, error) {
 			return prepare(ctx, Workspace{Call: call, Dir: dir, With: ws.With})
-		}}
+		}, Discard: ws.Discard}
 	}
 	if st.Writes != nil || st.Workspace != nil {
 		// The agent is told which paths are off limits. That is a courtesy:

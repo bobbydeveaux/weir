@@ -43,7 +43,7 @@ type AgentStart struct {
 // agent's word, and checked.
 func (w *Worker) isolated(ctx context.Context, work *engine.Work, req runner.RunRequest) (runner.RunResult, error) {
 	job := agent.Job{Step: req.Step, System: req.System, Prompt: req.Prompt, Schema: req.Schema, BudgetUSD: req.BudgetUSD,
-		Tools: req.Tools, Writes: req.Writes, Model: req.Model}
+		Tools: req.Tools, Writes: req.Writes, Model: req.Model, Effort: req.Effort}
 	if w.Model != nil {
 		job.Model = w.Model(req.Tier, req.Model)
 	}
@@ -62,7 +62,7 @@ func (w *Worker) isolated(ctx context.Context, work *engine.Work, req runner.Run
 			if err != nil {
 				return runner.RunResult{}, fmt.Errorf("prepare the working directory: %w", err)
 			}
-			job.Archive, job.Ignore = agent.Workspace, prepared.Ignore
+			job.Archive, job.Ignore, job.Discard = agent.Workspace, prepared.Ignore, req.Workspace.Discard
 		} else {
 			job.Archive = agent.Files
 			for _, f := range req.Files {

@@ -12,6 +12,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -154,11 +156,20 @@ type Template struct {
 	System string `json:"system,omitempty"`
 	User   string `json:"user"`
 	Model  string `json:"model,omitempty"`
+	// Effort is how hard the model should think: low, medium, high, xhigh or
+	// max. Empty leaves it to the model's default.
+	Effort string `json:"effort,omitempty"`
 }
+
+// Efforts are the values a template's effort may take.
+var Efforts = []string{"low", "medium", "high", "xhigh", "max"}
 
 // PublishTemplate stores body as the next immutable version of the template
 // named key and returns that version number.
 func (e *Engine) PublishTemplate(ctx context.Context, key string, body Template, by string) (int, error) {
+	if body.Effort != "" && !slices.Contains(Efforts, body.Effort) {
+		return 0, fmt.Errorf("template %s: effort %q is not one of %s", key, body.Effort, strings.Join(Efforts, ", "))
+	}
 	raw, err := json.Marshal(body)
 	if err != nil {
 		return 0, err

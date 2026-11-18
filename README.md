@@ -289,6 +289,7 @@ weir serve
 - The token is good for one attempt. Once the step ends it opens nothing.
 - What a container may reach on the network is the platform's to decide: a Docker network here (`WEIR_AGENT_DOCKER_ARGS`), a VPC or a security group in a cloud. A step's `shell.hosts` applies only to an agent run inline.
 - Add the toolchains your code needs to the image; `deploy/agent.Dockerfile` says how.
+- Skills and settings in the image's home directory (`~/.claude`) are loaded, because whoever built the image put them there. A repository's own are ignored. An agent run inline loads neither.
 
 Know the limits:
 
@@ -323,6 +324,7 @@ An agent that fixes code has to start inside the code. An `ai` step with `worksp
 - Changes are kept like any other files a step writes: `steps.fix.files` lists them, with `deleted: true` on a file that was removed, and the API lists and downloads them.
 - The limits are on what changed, not on what the directory holds. Going over fails the step. A new link, or anything else that is not an ordinary file, also fails it.
 - A step with a workspace cannot also list `files:`.
+- `workspace: { handler: …, discard: true }` keeps nothing the agent changes. It is for a step that reads a directory and must leave no mark, such as an assessment.
 - Not built: whether a file is executable is not recorded; the Codex adapter cannot do this.
 
 One handler ships with Weir, `github.checkout`. It clones one repository into the agent's directory.
