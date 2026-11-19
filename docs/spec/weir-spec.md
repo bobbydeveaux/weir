@@ -373,6 +373,7 @@ The engine enforces these rules itself. A workflow author cannot switch them off
 | Model calls go through one gateway | Every model call is routed, metered against its attempt and checked against the budget in one place. |
 | Decisions fail safe | A decide step returns its declared default when the classifier is unsure, slow or unavailable. |
 | Duties are separated | A human step can exclude the run's requester. The engine checks the actor, not the user interface. |
+| Trusted work is still sampled | A `next` rule can send a fraction of runs to a person with `sample(seed, rate)`. The pick is made from the seed alone, so it is the same on a retry and can be checked afterwards. |
 | The harness holds the keys | The agent proposes; registered deterministic handlers commit, push and merge. Write credentials are issued to the handler, never to the agent. |
 | Evidence is complete | Each attempt records the prompt, full transcript, tool calls, output, actor, tokens, cost and duration. |
 | The log cannot be rewritten | Events are append-only, enforced in the database. Current state is derived from the log. |
