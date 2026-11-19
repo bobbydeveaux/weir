@@ -541,6 +541,32 @@ Know the limits before turning it on:
 - The worker's image needs whatever the code needs: Go, Node, Python and so on.
 - The Codex adapter cannot give an agent a shell.
 
+### An agent that signs within limits, and a sample for a person
+
+A workflow need not send every run to a person. A `next` rule can let an agent's work go on when it is inside a written limit, send it to a person when it is not, and still send a fraction of the runs inside the limit to be checked:
+
+```yaml
+steps:
+  - id: check                      # plain code: is this inside the limit?
+    kind: external
+    connection: my-app
+    call: { path: /check, body: { proposal: steps.propose.output } }
+    next:
+      # Inside the limit, and not one of the one in ten picked for review.
+      - when: output.within_limits && !sample(run.id + "/approve", 0.1)
+        go: apply
+      # Everything else is a person's: the exceptions, and the sample.
+      - go: approve
+
+  - id: approve
+    kind: human
+    assign: { role: approver }
+```
+
+`sample(seed, rate)` is true for about `rate` of all seeds. There is no chance in it: the pick is worked out from the seed alone. So a run that is retried is picked, or not, exactly as before, and anyone can check afterwards why a run did or did not go to a person. Give each sampling step its own seed, such as `run.id + "/approve"`, or the same runs are picked at every one.
+
+A rate outside 0 to 1 is an error when the rule runs. Not yet: a record on the run that says it was picked as a sample and not as an exception, and a report of how samples turned out.
+
 ### Schedules
 
 A workflow can start by itself. Give a trigger a `schedule` in place of an `event`:

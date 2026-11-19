@@ -188,6 +188,7 @@ How work is claimed, held and returned.
 - [x] Outcomes that `next` rules can branch on
 - [x] Timeouts and an escalation chain
 - [x] Approve and reject through the API and `weir approve`
+- [x] A sample of runs for a person to review: `sample(seed, rate)` in a `next` rule sends about that fraction to a human step and lets the rest go on, the same runs every time. A rate outside 0 to 1 is an error when the rule runs, not when the workflow is published (#122)
 - [ ] Reopening a decision, so that the right person can redo an approval made by the wrong one (#15)
 - [ ] Check that the person deciding holds the role the step names (today the role is recorded and not checked) (#16)
 
