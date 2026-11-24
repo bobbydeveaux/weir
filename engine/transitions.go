@@ -808,6 +808,14 @@ func (e *Engine) Park(ctx context.Context, token string) error {
 
 // Defer puts a running step back in the queue to be tried again after a
 // delay, without using up a retry. It is how a polling step waits.
+//
+// A polling step never parks, so no timer watches it. Its timeout is checked
+// here instead, each time a poll comes back: once it has been polling for
+// longer than its timeout it fails as a waiting step does when its timer
+// fires. A step can therefore run over its timeout by up to one interval.
+// The time is counted from the first poll since the step last failed, so a
+// step that is retried or resumed gets its whole timeout again, as a step
+// that parks does.
 func (e *Engine) Defer(ctx context.Context, token string, after time.Duration) error {
 	return e.inTx(ctx, func(tx pgx.Tx) error {
 		att, err := e.liveAttempt(ctx, tx, token, "running")
@@ -821,6 +829,28 @@ func (e *Engine) Defer(ctx context.Context, token string, after time.Duration) e
 		run, err := e.loadRun(ctx, tx, step.runID)
 		if err != nil {
 			return err
+		}
+		st, err := stepSpec(run, step)
+		if err != nil {
+			return e.failRun(ctx, tx, run, failure("definition_invalid", err.Error()))
+		}
+		if st.Timeout != "" {
+			if limit, err := spec.ParseDuration(st.Timeout); err == nil {
+				// The database's clock, because it also set started_at. Only
+				// the polls since the last attempt that ended in failure count.
+				var over bool
+				if err := tx.QueryRow(ctx, `
+					SELECT now() - MIN(started_at) >= make_interval(secs => $2::float8) FROM attempts
+					WHERE step_id = $1::uuid AND number > COALESCE((
+						SELECT MAX(number) FROM attempts WHERE step_id = $1::uuid AND status NOT IN ('running', 'deferred')), 0)`,
+					step.id, limit.Seconds()).Scan(&over); err != nil {
+					return err
+				}
+				if over {
+					return e.failTx(ctx, tx, att, run, step, st,
+						Failure{Type: "timeout", Message: "the step was not completed in time", Actor: "engine"}, "timed_out", nil)
+				}
+			}
 		}
 		if _, err := tx.Exec(ctx, `UPDATE attempts SET status = 'deferred', finished_at = now(), lease_until = NULL WHERE id = $1::uuid`, att.id); err != nil {
 			return err

@@ -29,7 +29,7 @@ Then follow [the support inbox example](examples/support-inbox), which classifie
 | `decide` steps | One label from a closed list; an unsure, wrong or failed answer becomes the default. Answered by a small model or a decision model (Jev, Gemini Decisions), chosen per step |
 | `ai` steps | A pinned prompt, a budget, output checked against a JSON Schema, documents the agent may read, files it may write, a prepared working directory, a sandboxed shell, and tools |
 | `human` steps | An inbox, outcomes, timeouts, escalation, values sent with a decision, and a requester who cannot approve their own run |
-| `external` steps | Call a third party, then resume on a callback with a one-time token, or poll until a condition holds. Or wait for an event that is about this run, such as GitHub saying a pull request was merged |
+| `external` steps | Call a third party, then resume on a callback with a one-time token, or poll until a condition holds. A poll step that sets a `timeout` is stopped at it and fails with the error type `timeout`. The timeout is checked when a poll comes back, so the step can run over by up to one poll interval. Or wait for an event that is about this run, such as GitHub saying a pull request was merged |
 | Tools for agents | Every call goes through a proxy that checks it against the step's list and records it. Tools come from the server, from a workspace's MCP servers, and for GitHub |
 | Connections | A named address per workspace, HTTP or MCP, with a credential named by reference and never stored |
 | Events in | An application reports what happened, or a third party posts a signed webhook; triggers start the workflows that want it, and steps that were waiting for it move on. A workflow can also start on a schedule |
