@@ -1,0 +1,42 @@
+# A run that waits for GitHub to say a pull request was closed, and goes one
+# way if it was merged and another if it was not.
+#
+# It needs a connection called `github` that receives GitHub's webhooks (see
+# "Webhooks from a third party" in the README), so that a closed pull request
+# arrives as the event `github.pull_request`.
+weir: "0.1"
+namespace: examples
+name: wait-for-merge
+
+input:
+  schema:
+    type: object
+    required: [pull_request]
+    properties:
+      pull_request: { type: string, description: "The pull request's address on GitHub" }
+
+steps:
+  - id: merged
+    kind: external
+    resume: event
+    event: github.pull_request
+    # Only the event about this run's pull request moves this run.
+    when: event.data.action == "closed" && event.data.pull_request.html_url == input.pull_request
+    timeout: 7d
+    next:
+      - when: "!output.data.pull_request.merged"
+        go: closed_unmerged
+
+  - id: was_merged
+    kind: deterministic
+    handler: core.echo
+    input:
+      result: '"merged"'
+      by: steps.merged.output.data.pull_request.merged_by.login
+    end: true
+
+  - id: closed_unmerged
+    kind: deterministic
+    handler: core.echo
+    input:
+      result: '"closed without being merged"'

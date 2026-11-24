@@ -309,6 +309,10 @@ func (e *Engine) Publish(ctx context.Context, source []byte, by string) (*Publis
 				return nil, fmt.Errorf("step %s: %w", s.ID, err)
 			}
 		case spec.KindExternal:
+			// A step that only waits for an event names no connection.
+			if s.Connection == "" {
+				continue
+			}
 			if _, err := e.endpoint(ctx, e.pool, e.workspace, s.Connection); err != nil {
 				return nil, fmt.Errorf("step %s: %w", s.ID, err)
 			}

@@ -31,6 +31,9 @@ const (
 	KindExternal      = "external"
 )
 
+// ResumeEvent is the resume mode of an external step that waits for an event.
+const ResumeEvent = "event"
+
 // Failure policies: what happens to the run when a step fails for good.
 const (
 	OnFailureBlock    = "block"
@@ -124,6 +127,11 @@ type Step struct {
 	Call       *Call  `yaml:"call,omitempty" json:"call,omitempty"`
 	Resume     string `yaml:"resume,omitempty" json:"resume,omitempty"`
 	Poll       *Poll  `yaml:"poll,omitempty" json:"poll,omitempty"`
+	// Event and When are for resume: event. The step waits for an event of
+	// this type for which When is true. When can see the run's own steps, so
+	// a run takes only the event that is about it.
+	Event string `yaml:"event,omitempty" json:"event,omitempty"`
+	When  string `yaml:"when,omitempty" json:"when,omitempty"`
 
 	// Accepted but not yet acted on.
 	Hooks   any `yaml:"hooks,omitempty" json:"hooks,omitempty"`
@@ -483,21 +491,29 @@ func validateHuman(s *Step, at string, add func(string, ...any)) {
 }
 
 func validateExternal(s *Step, at string, add func(string, ...any)) {
-	if s.Connection == "" {
-		add("%s: an external step must name a connection", at)
+	// A step that waits for an event need not call anyone first: the event
+	// may be caused by an earlier step, or by a person.
+	calls := s.Resume != ResumeEvent || s.Connection != "" || s.Call != nil
+	if calls {
+		if s.Connection == "" {
+			add("%s: an external step must name a connection", at)
+		}
+		if s.Call == nil || s.Call.Path == "" {
+			add("%s: an external step must declare the call to make", at)
+		} else if err := checkMapping(s.Call.Body); err != nil {
+			add("%s: call.body: %v", at, err)
+		} else if s.Call.Body != nil && s.Input != nil {
+			add("%s: what is sent is said twice, as input and as call.body; keep one", at)
+		}
 	}
-	if s.Call == nil || s.Call.Path == "" {
-		add("%s: an external step must declare the call to make", at)
-	} else if err := checkMapping(s.Call.Body); err != nil {
-		add("%s: call.body: %v", at, err)
-	} else if s.Call.Body != nil && s.Input != nil {
-		add("%s: what is sent is said twice, as input and as call.body; keep one", at)
+	if s.Resume != ResumeEvent && (s.Event != "" || s.When != "") {
+		add("%s: event and when are only allowed with resume: event", at)
+	}
+	if s.Resume != "poll" && s.Poll != nil {
+		add("%s: poll is only allowed with resume: poll", at)
 	}
 	switch s.Resume {
 	case "callback":
-		if s.Poll != nil {
-			add("%s: poll is only allowed with resume: poll", at)
-		}
 		if s.Timeout == "" {
 			add("%s: a step that waits for a callback must set a timeout", at)
 		}
@@ -514,10 +530,24 @@ func validateExternal(s *Step, at string, add func(string, ...any)) {
 				}
 			}
 		}
+	case ResumeEvent:
+		if !eventPattern.MatchString(s.Event) {
+			add("%s: resume: event needs event, the type to wait for: lower-case words joined by dots, such as order.placed", at)
+		}
+		// Without a rule, any event of the type would move every run waiting
+		// for one. A step that really means that says when: "true".
+		if s.When == "" {
+			add("%s: resume: event needs when, which says which event is this run's", at)
+		} else if err := CheckExpression(s.When); err != nil {
+			add("%s: when: %v", at, err)
+		}
+		if s.Timeout == "" {
+			add("%s: a step that waits for an event must set a timeout", at)
+		}
 	default:
-		add("%s: resume must be callback or poll", at)
+		add("%s: resume must be callback, poll or event", at)
 	}
-	forbid(s, at, add, "external", fieldsExcept("connection", "call", "resume", "poll"))
+	forbid(s, at, add, "external", fieldsExcept("connection", "call", "resume", "poll", "event", "when"))
 }
 
 // Hook tells an application about moments in a run. Weir posts to Path on
@@ -730,6 +760,8 @@ func kindFields(s *Step) map[string]bool {
 		"call":       s.Call != nil,
 		"resume":     s.Resume != "",
 		"poll":       s.Poll != nil,
+		"event":      s.Event != "",
+		"when":       s.When != "",
 	}
 }
 

@@ -327,7 +327,10 @@ func (e *Engine) Claim(ctx context.Context, kinds []string, workerID string, lea
 		case spec.KindAI:
 			w.Template, err = e.loadTemplate(ctx, tx, run.workspace, st.Prompt)
 		case spec.KindExternal:
-			w.Connection, err = e.endpoint(ctx, tx, run.workspace, st.Connection)
+			// A step that only waits for an event calls nobody.
+			if st.Connection != "" {
+				w.Connection, err = e.endpoint(ctx, tx, run.workspace, st.Connection)
+			}
 		}
 		if err != nil {
 			return e.stepFailed(ctx, tx, run, step, failure("reference_missing", err.Error()))
@@ -763,7 +766,8 @@ func (e *Engine) compensateNext(ctx context.Context, tx pgx.Tx, run *runRow) err
 // --- parking and deferring ---------------------------------------------------------------
 
 // Park moves a running attempt to waiting: the call has been made, and the
-// step now waits for whoever holds the token to return it.
+// step now waits for whoever holds the token to return it, or for the event
+// its definition names.
 func (e *Engine) Park(ctx context.Context, token string) error {
 	return e.inTx(ctx, func(tx pgx.Tx) error {
 		att, err := e.liveAttempt(ctx, tx, token, "running")
@@ -792,6 +796,10 @@ func (e *Engine) Park(ctx context.Context, token string) error {
 			return err
 		}
 		if err := e.setRunStatus(ctx, tx, run, "waiting"); err != nil {
+			return err
+		}
+		if st.Kind == spec.KindExternal && st.Resume == spec.ResumeEvent {
+			_, err := e.waitForEvent(ctx, tx, run, step, att, st)
 			return err
 		}
 		return e.event(ctx, tx, run, &step.id, &att.id, "step.waiting", "worker", map[string]any{"for": "callback"})

@@ -40,6 +40,15 @@ export interface Triggered {
 	error?: string;
 }
 
+/** What an event did for one step that was waiting for it. */
+export interface Resumed {
+	run_id: string;
+	/** The step's id in its definition. */
+	step: string;
+	/** Why the step's rule could not be worked out. The step is still waiting. */
+	error?: string;
+}
+
 /** One row of GET /v1/events. */
 export interface InboundEvent {
 	id: string;
@@ -50,6 +59,7 @@ export interface InboundEvent {
 	sent_by: string;
 	received_at: string;
 	runs: Triggered[] | null;
+	resumed: Resumed[] | null;
 }
 
 /** One row of GET /v1/triggers: an event type and a workflow it starts. */
@@ -144,6 +154,9 @@ export interface SpecStep {
 	call?: { method?: string; path: string; body?: Record<string, Json> };
 	resume?: string;
 	poll?: { every?: string; until: string };
+	/** With resume: event, the type of event the step waits for, and the rule that says which is this run's. */
+	event?: string;
+	when?: string;
 
 	// accepted by the engine but not yet acted on
 	hooks?: Json;
