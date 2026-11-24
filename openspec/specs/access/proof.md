@@ -1,0 +1,16 @@
+# Proof: access
+
+Which test proves each requirement. `make spec` checks that every requirement is listed here and that every test named exists.
+
+| Requirement | Proven by |
+| --- | --- |
+| Without an admin key the API trusts its callers | `api/api_test.go:TestAWorkflowDrivenEntirelyOverHTTP` |
+| With an admin key set every request needs a key | `api/auth_test.go:TestKeysDecideWhoMayDoWhat` (the 401 is asserted; the `WWW-Authenticate` header is not) |
+| A key is shown once and only its hash is stored | `api/auth_test.go:TestKeysDecideWhoMayDoWhat` |
+| A key belongs to one workspace | `api/auth_test.go:TestKeysDecideWhoMayDoWhat` |
+| A role decides what a key may do | `api/auth_test.go:TestKeysDecideWhoMayDoWhat`, `api/front_test.go:TestBehindASignInProxy` (a reader's 403, a writer's 403 on keys, a made-up role and who creates a workspace are asserted; a writer deciding, resuming and cancelling is not) |
+| A key acts as itself unless it may act for others | `api/auth_test.go:TestKeysDecideWhoMayDoWhat` (the admin key naming a person is not asserted) |
+| A revoked key stops working at once | `api/auth_test.go:TestKeysDecideWhoMayDoWhat` |
+| Some paths need no key | `api/auth_test.go:TestKeysDecideWhoMayDoWhat`, `api/isolated_test.go:TestAnAgentInItsOwnContainerTalksOnlyToWeir`, `api/webhooks_test.go:TestASignedWebhookBecomesAnEvent` (the health check, an agent's paths and webhooks are asserted on a server with keys on; callbacks and tool calls are only tested on a server with keys off) |
+| A sign-in proxy can vouch for a person | `api/front_test.go:TestBehindASignInProxy` (who the person is and what they may do are asserted; that their address is the actor recorded on a run is not) |
+| A server can be made to refuse to start open | Not tested: the check is in `serve` in `cmd/weir/main.go`, the image sets the variable in `deploy/Dockerfile`, and no test starts a server |

@@ -31,6 +31,10 @@ git switch main && git pull
 git switch -c feature/issue-0-credentials
 ```
 
+## Before the commit
+
+Every commit is checked first by the pre-commit hook: a `feature/` branch must have changed something under `openspec/`, and `make spec` must pass. If `git config core.hooksPath` does not say `.githooks`, run `make hooks` so that it does. If the hook stops the commit, fix what it names (the `weir-spec` skill says how) and commit again. Never pass `--no-verify`.
+
 ## The commit
 
 Write the message with `-m` or `-F`, never in an editor:

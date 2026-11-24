@@ -1,0 +1,13 @@
+#!/bin/sh
+# Before every commit: a feature must have its spec, and every spec must pass.
+# Turn this on once in each clone with `make hooks`.
+cd "$(git rev-parse --show-toplevel)" || exit 1
+./scripts/spec-gate || exit 1
+echo "Checking the specs (make spec)…"
+if ! out=$(make --no-print-directory spec 2>&1); then
+	echo "$out" | grep -v 'not tested:' | tail -40
+	echo
+	echo "The commit was stopped: make spec failed. Fix the spec, or the proof.md beside it, and commit again."
+	exit 1
+fi
+echo "$out" | grep -E 'Totals|capabilities,' | sed 's/^ *specproof_test.go:[0-9]*: //'

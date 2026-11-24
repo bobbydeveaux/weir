@@ -23,6 +23,7 @@ For example: no live call to the real service.
 
 - [ ] `docs/build/02-epics.md` is updated: the item is ticked, and anything not done is written down
 - [ ] `README.md` and the files under `docs/` say what is true now
+- [ ] `openspec/specs/` says what is true now, each new requirement has its row in `proof.md`, and `make spec` passes (if behaviour changed)
 - [ ] The website's docs page needs a matching change (say which section)
 
 ## Rules

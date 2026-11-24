@@ -28,7 +28,7 @@ Since then two real applications have run on it. The second is a live applicatio
 | 11 Triggers | Mostly done | A `decide` filter in a trigger; counters; moving waiting steps on after a crash between an event being recorded and acted on |
 | 12 Hooks | Mostly done | Hooks on a single step |
 | 13 API and command line | Mostly done | Sign-in for people (the console takes a key today); a published API description; logs and metrics; the newer endpoints on the command line |
-| 14 Examples and conformance | Started | Two more examples; tests for all three; the conformance suite. Two real applications have run on Weir, which the plan did not ask for; the second is not switched over |
+| 14 Examples and conformance | Started | Two more examples; tests for all three; the conformance suite; tests for the 39 requirements in `openspec/specs/` that have none. Two real applications have run on Weir, which the plan did not ask for; the second is not switched over |
 | 15 Release | Started | The repository is public. No tagged version yet |
 | 16 Pipes | Started | GitHub is the first: signed webhooks in, tools, a GitHub App to sign in with, a checkout and a commit that opens a pull request, proven against the real GitHub. Left: the package format, Slack, and connecting from the console |
 | 17 Running in the cloud | Started | Images, a Helm chart, and agents as Kubernetes Jobs or Cloud Run jobs are built. Nothing is deployed, and the Cloud Run launcher has not met the real service. Left: scale to zero, long steps off the request, guides for each cloud, AWS |
@@ -261,12 +261,12 @@ How work is claimed, held and returned.
 - [x] Delivery through the outbox, at least once, with backoff
 - [x] A signature and a unique delivery id on every request: a hook may name a shared secret, and is then sent with `Weir-Timestamp` and `Weir-Signature`, the HMAC-SHA256 of the timestamp and the body. A hook with no secret is sent unsigned, as before (#38)
 - [x] A delivery log (in a run's record), and a failed hook that never fails the run
-- [x] Hooks: a `hooks:` block (`on`, `connection`, `path`); queued with the event they report, delivered by the worker, retried up to eight times with a growing wait, and listed in a run's record. Not yet: hooks on a single step, signing the request, and showing them in the console
+- [x] Hooks: a `hooks:` block (`on`, `connection`, `path`); queued with the event they report, delivered by the worker, retried up to eight times with a growing wait, and listed in a run's record. Not yet: hooks on a single step, and showing them in the console
 
 ### 13. API, command line and visibility
 
 - [ ] An HTTP API with a published description, covering definitions, runs, approvals and events (the API is built; it has no published description) (#39)
-- [x] `weir run`, `weir status`, `weir logs`, `weir approve`, `weir resume`
+- [x] `weir run`, `weir status`, `weir approve`, `weir resume`. There is no `weir logs`: a run's event log is `weir status --events`
 - [x] A run timeline: every step, attempt, cost and actor in order
 - [ ] Structured logs and basic metrics (#40)
 - [x] API keys and roles: `WEIR_ADMIN_KEY` turns authentication on; a key belongs to one workspace and is a reader, a writer or an admin; a key may be allowed to act for an application's users; only a hash is stored. Proven with agent-demo running against a locked server
@@ -285,6 +285,7 @@ How work is claimed, held and returned.
 ### 14. Examples and conformance
 
 - [ ] The three website examples as real workflows in `examples/`, each with a test (the support inbox is there and has been run for real; it has no automated test, and the other two are not written) (#45)
+- [x] A spec for everything that is built, kept with OpenSpec in `openspec/specs/`: 28 capabilities and 286 requirements, each with scenarios. Beside each spec a `proof.md` names the test that proves each requirement, or says that none does: 247 name a test and 39 are marked not tested. `make spec` checks the form of the specs and that every test named exists, on a laptop and in CI. Not yet: the 39 requirements with no test; and a named test is checked to exist, not to assert what the row says (#125)
 - [ ] A conformance suite: a definition, its inputs, and the event log it must produce (#46)
 - [x] Crash tests: kill a worker mid-step; send a completion twice; let a lease expire
 - [ ] A quickstart that gets a new reader from clone to a finished run (#47)
