@@ -29,24 +29,37 @@ Open `docs/build/02-epics.md`.
 | A setting, a command, or how to run it | `README.md` |
 | The API (an endpoint, a header, a status code, a payload) | `README.md`, and say in the pull request that the website's docs page needs the same change |
 | What a workflow can say (the YAML) | `docs/spec/weir-spec.md` and `examples/` |
+| Anything Weir does | `openspec/specs/` (step 4) |
 | The database | `docs/build/01-database-design.md` |
 | How models are reached | `docs/build/03-agent-runners.md` |
 | A design decision | The decisions table in `docs/build/02-epics.md` |
 
 Write what is true now. Remove any sentence your change has made false, including "not built yet" lines.
 
-## 4. Check what you are about to commit
+## 4. Update the spec
+
+If the change alters what Weir does, `openspec/specs/` must say so in the same pull request.
+
+- The change should have started with an OpenSpec change in `openspec/changes/`. If it did not, write one now with the `weir-spec` skill.
+- Archive it (`openspec-archive-change`), so its requirements are folded into `openspec/specs/`.
+- Give every new or changed requirement its row in the capability's `proof.md`: the test that proves it, or `Not tested:` and why.
+- Remove or change any requirement your change has made false.
+- `make spec` must pass. The pre-commit hook runs it before every commit (`make hooks` turns the hook on); do not commit with `--no-verify`.
+
+A change that alters no behaviour skips this step.
+
+## 5. Check what you are about to commit
 
 - `git status --short` and `git diff --stat`: only the files you meant to change.
 - No secrets, keys, tokens, email addresses or paths from your own machine. No built files (`bin/`, `console/build/`, `node_modules/`).
 
-## 5. Commit and open a pull request
+## 6. Commit and open a pull request
 
 - One issue per pull request, on a branch named after it, never straight to `main`.
 - Every commit subject and the pull request title start with the issue number: `#0: Add credentials on a connection`. The description says `Closes #0`. Use the `weir-commit` skill; CI refuses anything else.
 - After the number, the message says what changed and why, in plain sentences.
 - Fill in the pull request template: what changed, how it was tested, what was not tested, and which to-do item it closes.
 
-## 6. Say what happened
+## 7. Say what happened
 
 End with a short, honest summary: what works, what you verified and how, what you did not verify, and what should come next.

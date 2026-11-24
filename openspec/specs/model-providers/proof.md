@@ -1,0 +1,16 @@
+# Proof: model-providers
+
+Which test proves each requirement. `make spec` checks that every requirement is listed here and that every test named exists.
+
+| Requirement | Proven by |
+| --- | --- |
+| The runner is chosen by a setting | `internal/config/config_test.go:TestFromEnvDefaults`, `internal/config/config_test.go:TestFromEnvRunner`, `internal/config/config_test.go:TestFromEnvRejectsUnknownRunner` (reading the setting is asserted; that a server set to `api` refuses to start, in `cmd/weir/main.go`, is not) |
+| Claude runs steps through its command line | `runner/claude_test.go:TestClaudeRunParsesOutputCostAndUsage` (against a stand-in for the command line; one real call is made by `runner/claude_test.go:TestClaudeLive`, which runs only with real credentials) |
+| Codex runs steps through its command line | `runner/codex_test.go:TestCodexRunReturnsTheAnswerAndUsage`, `runner/codex_test.go:TestCodexIsLockedDown` (against a stand-in for the command line; one real call is made by `runner/codex_test.go:TestCodexLive`, which runs only with real credentials) |
+| A Codex call's cost is an estimate | `runner/codex_test.go:TestCodexRunReturnsTheAnswerAndUsage` (the estimate and its mark are asserted; that a server gives Codex no prices, in `cmd/weir/main.go`, is not) |
+| A provider that cannot give a guarantee refuses the step | `runner/codex_test.go:TestCodexRefusesAStepWithTools`, `runner/decisions_test.go:TestDecisionServiceErrorsAreReported` (tools on Codex, and an ai step on a decision model, are asserted; Codex refusing files, writes, a workspace and a shell is not) |
+| Steps are routed to a provider by tier | `runner/codex_test.go:TestByTierSendsEachStepToItsRunner` (the routing rule is asserted with stand-in runners; that the server names the tier `codex`, in `cmd/weir/main.go`, is not) |
+| A tier's model is a setting | `runner/claude_test.go:TestAModelCanBeNamedAsACloudServesIt`, `runner/claude_test.go:TestClaudeDecideAsksForOneOfTheLabels`, `cmd/weir/main_test.go:TestListsAndPairsAreReadFromSettings`, `runner/codex_test.go:TestCodexIsLockedDown` (the defaults `small=haiku` and `large=opus`, set in `cmd/weir/main.go`, are not asserted) |
+| Claude can be sent to Bedrock, Vertex AI or a gateway by settings | `runner/claude_test.go:TestOnlyNamedVariablesReachAnAgent`, `runner/claude_test.go:TestAModelCanBeNamedAsACloudServesIt` (what reaches the command line is asserted; none of the three has been run against a real account) |
+| A command line's own error is reported | `runner/claude_test.go:TestClaudeReportsTheCommandLinesOwnError`, `runner/codex_test.go:TestCodexReportsItsOwnError`, `runner/claude_test.go:TestClaudeRunFailsWithoutStructuredOutput` (what a program printed when it exited badly is not asserted) |
+| A provider that is not set up says so | `runner/decisions_test.go:TestRouterSendsADecisionToTheNamedProvider` (the error and its hint are asserted; refusing to start on a bad `WEIR_DECIDE_PROVIDER`, in `cmd/weir/main.go`, is not) |

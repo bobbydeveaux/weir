@@ -1,0 +1,7 @@
+#!/bin/sh
+# Runs OpenSpec at the version this repository is checked against, so that
+# nobody needs it installed and everyone gets the same answer. Wherever an
+# OpenSpec skill says `openspec …`, run `./scripts/openspec …` here.
+# OpenSpec sends anonymous usage statistics unless told not to; this says not to.
+export OPENSPEC_TELEMETRY=0
+exec npx --yes @fission-ai/openspec@2.1.1 "$@"

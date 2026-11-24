@@ -41,6 +41,24 @@ jobs:
       - name: Helm chart
         run: helm lint deploy/helm/weir && helm template weir deploy/helm/weir --set existingSecret=weir > /dev/null
 
+  spec:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: console/.nvmrc
+      - name: A feature has its spec
+        if: github.event_name == 'pull_request'
+        run: ./scripts/spec-gate "origin/${{ github.base_ref }}"
+      - name: Specs
+        run: make spec
+
   console:
     runs-on: ubuntu-latest
     defaults:

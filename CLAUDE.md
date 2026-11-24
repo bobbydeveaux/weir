@@ -7,6 +7,7 @@ These rules apply to every person and every agent working in this repository.
 
 - **Where things stand, and what to do next:** `docs/build/02-epics.md`. It is the project's single to-do list.
   Run the `weir-status` skill to load it, or read it before you change anything.
+- **What Weir does today, requirement by requirement:** `openspec/specs/`. See "Specs" below.
 - **What Weir is meant to be:** `docs/spec/weir-spec.md`.
 - **Why things are the way they are:** the other files in `docs/build/`.
 
@@ -16,6 +17,8 @@ These rules apply to every person and every agent working in this repository.
 make up          # Postgres in Docker, on port 54329
 make check       # what CI runs: formatting, vet, and every test against Postgres
 make build       # ./bin/weir
+make spec        # the specs: their form, and that each requirement names what proves it
+make hooks       # once in each clone: run the spec checks before every commit
 cd console && npm install && npm run check && npm run build
 ```
 
@@ -29,14 +32,31 @@ A change is finished when all of these are true. The `weir-finish` skill walks t
 2. There is a test that fails without the change. Tests use a real Postgres, never a fake one.
 3. `docs/build/02-epics.md` is updated in the same change: tick what is now done, and say plainly what is not.
 4. Anything a user can see is documented: `README.md` for settings and commands, and the relevant file under `docs/`.
-5. The summary of the change says what was tested and what was not.
+5. If behaviour changed, the spec changed with it, and `make spec` passes. See "Specs" below.
+6. The summary of the change says what was tested and what was not.
+
+## Specs
+
+`openspec/specs/` says what Weir does today: one folder for each capability, with a `spec.md` of requirements and scenarios, and a `proof.md` that names the test proving each requirement. It is kept with [OpenSpec](https://github.com/Fission-AI/OpenSpec).
+
+- **A spec holds only what is built.** What is designed and not built stays in `docs/spec/weir-spec.md` and the to-do list.
+- **A change in behaviour starts with an OpenSpec change.** Before writing code, write `openspec/changes/issue-0-short-name/`: a proposal, the requirements it adds, changes or removes, and the tasks. Agree it, then build it. The `weir-spec` skill walks through it.
+- **A `feature/` branch must change something under `openspec/`.** The pre-commit hook and CI both refuse one that does not (`scripts/spec-gate`). Work that changes no behaviour is not a feature: name its branch `docs/`, `chore/` or `fix/`.
+- **The change is archived in the same pull request** (`openspec-archive-change`), which folds its requirements into `openspec/specs/`. Pull requests are squashed, so `main` never holds a spec that is ahead of the code or behind it.
+- **Every requirement has a row in `proof.md`:** the test that proves it, as `` `path/file_test.go:TestName` ``, or `Not tested:` and why. Name a test only if it asserts that behaviour. An honest "Not tested" is better than a test that only passes nearby.
+- **A change with no effect on behaviour needs no OpenSpec change:** documents, refactoring, CI.
+- **Run `make hooks` once in each clone.** Every commit then runs the two checks first, and is stopped if either fails. Never commit with `--no-verify`.
+- **OpenSpec is run as `./scripts/openspec`,** the fixed version this repository is checked against, with its usage statistics turned off.
+- **`make spec` checks it all on your own machine.** It needs Node 22.20 or later, and fetches a fixed version of OpenSpec the first time. The half that checks `proof.md` is an ordinary Go test, so `make check` runs it too.
 
 ## Rules that must not be weakened
 
 These are the reasons Weir exists. A change that relaxes one needs a maintainer's agreement first, in an issue.
 
 - **An agent is locked down.** It gets no built-in tools, no settings files, and almost none of the server's environment.
-  Never run a model's command line in an auto-approve or bypass-permissions mode.
+  Never run a model's command line in an auto-approve or bypass-permissions mode beside the worker, where it could reach the database and every workspace's secrets.
+  The one exception is an agent in a container of its own. There the container is the boundary: it holds nothing worth stealing, and it talks only to Weir's API with the one-time token for its step. Such an agent is given every tool and asked no questions.
+  Nothing else may run that way, and the exception must not be widened without a maintainer's agreement.
 - **Every tool call goes through the tool proxy,** which checks it against the step's list and records it. Nothing gives an agent a tool directly.
 - **A workspace cannot see or reach another workspace's anything.** Every query that reads a tenant's data is scoped by workspace.
   A new endpoint needs a test that a second workspace gets a 404 or an empty answer.

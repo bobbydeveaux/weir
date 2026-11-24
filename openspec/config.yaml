@@ -1,0 +1,27 @@
+schema: spec-driven
+
+context: |
+  Weir is a workflow engine built for AI: a stateless Go service on Postgres,
+  with a SvelteKit console. The rules for working here are in CLAUDE.md.
+
+  openspec/specs says what Weir does today. A requirement is written only for
+  behaviour that is built. What is designed and not built belongs in
+  docs/spec/weir-spec.md and docs/build/02-epics.md, never in a spec.
+
+  Every spec has a proof.md beside it, which names the test that proves each
+  requirement, or says "Not tested:" and why. `make spec` checks both.
+
+  A change is named after its GitHub issue, such as issue-105-wait-for-event,
+  and is archived in the same pull request that builds it.
+
+  Write plain British English: short sentences, active voice, and no softening.
+
+rules:
+  proposal:
+    - Say which GitHub issue the change closes, and what is out of scope
+  specs:
+    - Write a requirement only for behaviour the change will build, and say SHALL or MUST
+    - Give every requirement at least one scenario with WHEN and THEN
+    - Update the capability's proof.md in the same change
+  tasks:
+    - End with updating docs/build/02-epics.md, the docs and proof.md, then running make check and make spec
