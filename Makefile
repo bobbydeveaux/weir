@@ -1,6 +1,9 @@
 DATABASE_URL ?= postgres://weir:weir@localhost:54329/weir?sslmode=disable
 
-.PHONY: help up down run migrate build test test-db fmt vet check
+# The version of OpenSpec is fixed, so that the check means the same everywhere.
+OPENSPEC ?= npx --yes @fission-ai/openspec@2.1.1
+
+.PHONY: help up down run migrate build test test-db fmt vet check spec
 
 help: ## Show this help
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
@@ -36,3 +39,7 @@ check: ## What CI runs: formatting, vet and every test
 	@test -z "$$(gofmt -l .)" || { echo "gofmt needed on:"; gofmt -l .; exit 1; }
 	go vet ./...
 	$(MAKE) test-db
+
+spec: ## Check the specs: their form, and that each requirement names what proves it
+	OPENSPEC_TELEMETRY=0 $(OPENSPEC) validate --all --strict --no-interactive
+	go test -count=1 -v ./internal/specproof

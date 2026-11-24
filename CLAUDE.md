@@ -7,6 +7,7 @@ These rules apply to every person and every agent working in this repository.
 
 - **Where things stand, and what to do next:** `docs/build/02-epics.md`. It is the project's single to-do list.
   Run the `weir-status` skill to load it, or read it before you change anything.
+- **What Weir does today, requirement by requirement:** `openspec/specs/`. See "Specs" below.
 - **What Weir is meant to be:** `docs/spec/weir-spec.md`.
 - **Why things are the way they are:** the other files in `docs/build/`.
 
@@ -16,6 +17,7 @@ These rules apply to every person and every agent working in this repository.
 make up          # Postgres in Docker, on port 54329
 make check       # what CI runs: formatting, vet, and every test against Postgres
 make build       # ./bin/weir
+make spec        # the specs: their form, and that each requirement names what proves it
 cd console && npm install && npm run check && npm run build
 ```
 
@@ -29,7 +31,19 @@ A change is finished when all of these are true. The `weir-finish` skill walks t
 2. There is a test that fails without the change. Tests use a real Postgres, never a fake one.
 3. `docs/build/02-epics.md` is updated in the same change: tick what is now done, and say plainly what is not.
 4. Anything a user can see is documented: `README.md` for settings and commands, and the relevant file under `docs/`.
-5. The summary of the change says what was tested and what was not.
+5. If behaviour changed, the spec changed with it, and `make spec` passes. See "Specs" below.
+6. The summary of the change says what was tested and what was not.
+
+## Specs
+
+`openspec/specs/` says what Weir does today: one folder for each capability, with a `spec.md` of requirements and scenarios, and a `proof.md` that names the test proving each requirement. It is kept with [OpenSpec](https://github.com/Fission-AI/OpenSpec).
+
+- **A spec holds only what is built.** What is designed and not built stays in `docs/spec/weir-spec.md` and the to-do list.
+- **A change in behaviour starts with an OpenSpec change.** Before writing code, write `openspec/changes/issue-0-short-name/` (the `openspec-propose` skill does it): a proposal, the requirements it adds, changes or removes, and the tasks. Agree it, then build it.
+- **The change is archived in the same pull request** (`openspec-archive-change`), which folds its requirements into `openspec/specs/`. Pull requests are squashed, so `main` never holds a spec that is ahead of the code or behind it.
+- **Every requirement has a row in `proof.md`:** the test that proves it, as `` `path/file_test.go:TestName` ``, or `Not tested:` and why. Name a test only if it asserts that behaviour. An honest "Not tested" is better than a test that only passes nearby.
+- **A change with no effect on behaviour needs no OpenSpec change:** documents, refactoring, CI.
+- **`make spec` checks it all on your own machine.** It needs Node 22.20 or later, and fetches a fixed version of OpenSpec the first time. The half that checks `proof.md` is an ordinary Go test, so `make check` runs it too.
 
 ## Rules that must not be weakened
 

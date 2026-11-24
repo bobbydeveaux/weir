@@ -33,7 +33,7 @@ Then follow [the support inbox example](examples/support-inbox), which classifie
 | Tools for agents | Every call goes through a proxy that checks it against the step's list and records it. Tools come from the server, from a workspace's MCP servers, and for GitHub |
 | Connections | A named address per workspace, HTTP or MCP, with a credential named by reference and never stored |
 | Events in | An application reports what happened, or a third party posts a signed webhook; triggers start the workflows that want it. A workflow can also start on a schedule |
-| Events out | Hooks to an application, signed if asked, retried until delivered; and live streams of a run's events |
+| Events out | Hooks to an application, signed if asked, retried up to eight times; and live streams of a run's events |
 | Failure | `block`, `cancel` and `continue`; undo handlers run in reverse; a blocked run can be resumed or cancelled |
 | Tokens | One per attempt, stored hashed. A late, repeated or made-up completion changes nothing |
 | Crashes | A worker that disappears loses its lease, and the step is run again |
@@ -74,9 +74,12 @@ make up        # start Postgres on localhost:54329
 make test      # tests that need no database
 make test-db   # every test, against Postgres
 make check     # what CI runs
+make spec      # the specs in openspec/: their form, and that each requirement names what proves it
 ```
 
 Run `make help` for the full list. Tests for the engine run against a real Postgres, each in its own schema.
+
+What Weir does today is written down, requirement by requirement, in [`openspec/specs/`](openspec/specs). Each requirement names the test that proves it, or says that none does. `make spec` checks that on your own machine; it needs Node 22.20 or later.
 
 To make one real call through the Claude command line: `WEIR_TEST_CLAUDE=1 go test -run TestClaudeLive ./runner/`.
 
@@ -87,7 +90,7 @@ To make one real call through the Claude command line: `WEIR_TEST_CLAUDE=1 go te
 | `WEIR_DATABASE_URL` | Postgres connection string | required |
 | `WEIR_HTTP_ADDR` | Address the API listens on | `:8080` |
 | `WEIR_PUBLIC_URL` | Address third parties use to reach the API | `http://localhost` plus the port |
-| `WEIR_RUNNER` | How `ai` and `decide` steps run: `cli`, `api` or `fake` | `cli` |
+| `WEIR_RUNNER` | How `ai` and `decide` steps run: `cli` or `fake`. `api` is accepted as a name and refused when the server starts: it is not built | `cli` |
 | `WEIR_TYPESAFE_KEY` | API key for Jev. When set, `decide` steps use Jev unless they name another provider | none |
 | `WEIR_GEMINI_API_KEY` | API key for Gemini Decisions, for `decide` steps with `provider: gemini-decision` | none |
 | `WEIR_DECIDE_PROVIDER` | Provider for `decide` steps that name none: `jev`, `gemini-decision`, `claude` or `codex` | `jev` with a key, otherwise `claude` |
@@ -687,6 +690,7 @@ List the credential variables your platform actually uses; the ones above are th
 | `api/` | The HTTP API |
 | `cmd/weir/` | The command line |
 | `examples/` | Workflows you can run |
+| `openspec/` | What Weir does today, as requirements with the test that proves each |
 
 ## Licence
 
