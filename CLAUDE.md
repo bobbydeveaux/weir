@@ -54,7 +54,9 @@ A change is finished when all of these are true. The `weir-finish` skill walks t
 These are the reasons Weir exists. A change that relaxes one needs a maintainer's agreement first, in an issue.
 
 - **An agent is locked down.** It gets no built-in tools, no settings files, and almost none of the server's environment.
-  Never run a model's command line in an auto-approve or bypass-permissions mode.
+  Never run a model's command line in an auto-approve or bypass-permissions mode beside the worker, where it could reach the database and every workspace's secrets.
+  The one exception is an agent in a container of its own. There the container is the boundary: it holds nothing worth stealing, and it talks only to Weir's API with the one-time token for its step. Such an agent is given every tool and asked no questions.
+  Nothing else may run that way, and the exception must not be widened without a maintainer's agreement.
 - **Every tool call goes through the tool proxy,** which checks it against the step's list and records it. Nothing gives an agent a tool directly.
 - **A workspace cannot see or reach another workspace's anything.** Every query that reads a tenant's data is scoped by workspace.
   A new endpoint needs a test that a second workspace gets a 404 or an empty answer.
