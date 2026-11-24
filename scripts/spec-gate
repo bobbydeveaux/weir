@@ -1,0 +1,30 @@
+#!/bin/sh
+# A feature changes what Weir does, so it must change the spec. On a branch
+# named feature/…, this fails unless something under openspec/ has changed
+# since the branch left the base (default origin/main), counting what is
+# staged. Other kinds of branch pass: a fix, a document or a chore may change
+# no behaviour.
+base=${1:-origin/main}
+branch=${GITHUB_HEAD_REF:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null)}
+case "$branch" in
+feature/*) ;;
+*) exit 0 ;;
+esac
+if ! git rev-parse --verify --quiet "$base" >/dev/null; then
+	echo "spec-gate: cannot find $base to compare with, so the check was skipped. Run: git fetch origin" >&2
+	exit 0
+fi
+if { git diff --name-only "$base"...HEAD; git diff --cached --name-only; } | grep -q -E '^openspec/(specs|changes)/'; then
+	exit 0
+fi
+cat >&2 <<MSG
+This is a feature branch ($branch) and nothing under openspec/ has changed.
+
+A feature changes what Weir does, so it starts with an OpenSpec change:
+a proposal, the requirements it adds or changes, and the tasks.
+Use the weir-spec skill, or see "Specs" in CLAUDE.md.
+
+If the work changes no behaviour, it is not a feature: name the branch
+docs/, chore/ or fix/ instead.
+MSG
+exit 1

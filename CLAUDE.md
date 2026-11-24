@@ -18,6 +18,7 @@ make up          # Postgres in Docker, on port 54329
 make check       # what CI runs: formatting, vet, and every test against Postgres
 make build       # ./bin/weir
 make spec        # the specs: their form, and that each requirement names what proves it
+make hooks       # once in each clone: run the spec checks before every commit
 cd console && npm install && npm run check && npm run build
 ```
 
@@ -39,10 +40,13 @@ A change is finished when all of these are true. The `weir-finish` skill walks t
 `openspec/specs/` says what Weir does today: one folder for each capability, with a `spec.md` of requirements and scenarios, and a `proof.md` that names the test proving each requirement. It is kept with [OpenSpec](https://github.com/Fission-AI/OpenSpec).
 
 - **A spec holds only what is built.** What is designed and not built stays in `docs/spec/weir-spec.md` and the to-do list.
-- **A change in behaviour starts with an OpenSpec change.** Before writing code, write `openspec/changes/issue-0-short-name/` (the `openspec-propose` skill does it): a proposal, the requirements it adds, changes or removes, and the tasks. Agree it, then build it.
+- **A change in behaviour starts with an OpenSpec change.** Before writing code, write `openspec/changes/issue-0-short-name/`: a proposal, the requirements it adds, changes or removes, and the tasks. Agree it, then build it. The `weir-spec` skill walks through it.
+- **A `feature/` branch must change something under `openspec/`.** The pre-commit hook and CI both refuse one that does not (`scripts/spec-gate`). Work that changes no behaviour is not a feature: name its branch `docs/`, `chore/` or `fix/`.
 - **The change is archived in the same pull request** (`openspec-archive-change`), which folds its requirements into `openspec/specs/`. Pull requests are squashed, so `main` never holds a spec that is ahead of the code or behind it.
 - **Every requirement has a row in `proof.md`:** the test that proves it, as `` `path/file_test.go:TestName` ``, or `Not tested:` and why. Name a test only if it asserts that behaviour. An honest "Not tested" is better than a test that only passes nearby.
 - **A change with no effect on behaviour needs no OpenSpec change:** documents, refactoring, CI.
+- **Run `make hooks` once in each clone.** Every commit then runs the two checks first, and is stopped if either fails. Never commit with `--no-verify`.
+- **OpenSpec is run as `./scripts/openspec`,** the fixed version this repository is checked against, with its usage statistics turned off.
 - **`make spec` checks it all on your own machine.** It needs Node 22.20 or later, and fetches a fixed version of OpenSpec the first time. The half that checks `proof.md` is an ordinary Go test, so `make check` runs it too.
 
 ## Rules that must not be weakened

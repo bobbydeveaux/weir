@@ -75,6 +75,7 @@ make test      # tests that need no database
 make test-db   # every test, against Postgres
 make check     # what CI runs
 make spec      # the specs in openspec/: their form, and that each requirement names what proves it
+make hooks     # once: run the spec checks before every commit
 ```
 
 Run `make help` for the full list. Tests for the engine run against a real Postgres, each in its own schema.

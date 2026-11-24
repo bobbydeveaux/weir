@@ -40,11 +40,11 @@ Write what is true now. Remove any sentence your change has made false, includin
 
 If the change alters what Weir does, `openspec/specs/` must say so in the same pull request.
 
-- The change should have started with an OpenSpec change in `openspec/changes/`. If it did not, write one now.
+- The change should have started with an OpenSpec change in `openspec/changes/`. If it did not, write one now with the `weir-spec` skill.
 - Archive it (`openspec-archive-change`), so its requirements are folded into `openspec/specs/`.
 - Give every new or changed requirement its row in the capability's `proof.md`: the test that proves it, or `Not tested:` and why.
 - Remove or change any requirement your change has made false.
-- `make spec` must pass.
+- `make spec` must pass. The pre-commit hook runs it before every commit (`make hooks` turns the hook on); do not commit with `--no-verify`.
 
 A change that alters no behaviour skips this step.
 
