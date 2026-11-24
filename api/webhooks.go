@@ -85,7 +85,8 @@ func (s *server) webhook(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	reply(w, http.StatusAccepted, map[string]any{"received": true, "duplicate": out.Duplicate, "started": len(out.Runs)})
+	reply(w, http.StatusAccepted, map[string]any{"received": true, "duplicate": out.Duplicate,
+		"started": len(out.Runs), "resumed": len(out.Resumed)})
 }
 
 // signed reports whether header holds the HMAC-SHA256 of body under secret,

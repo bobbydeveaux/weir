@@ -590,6 +590,10 @@ func (w *Worker) call(work *engine.Work, ref, system, prompt, response string, u
 
 func (w *Worker) external(ctx context.Context, work *engine.Work) error {
 	st := work.Step
+	if st.Call == nil {
+		// Nothing to call: the step only waits for an event.
+		return w.Engine.Park(ctx, work.Token)
+	}
 	method := st.Call.Method
 	if method == "" {
 		method = http.MethodPost
@@ -621,9 +625,10 @@ func (w *Worker) external(ctx context.Context, work *engine.Work) error {
 			Retryable: resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests, Actor: w.ID})
 	}
 
-	if st.Resume == "callback" {
-		// The step now waits for the third party to return the token. If it
-		// already has, the token is stale and there is nothing left to do.
+	if st.Resume == "callback" || st.Resume == spec.ResumeEvent {
+		// The step now waits for the third party to return the token, or for
+		// the event it names. If the token has already come back, it is stale
+		// and there is nothing left to do.
 		return w.Engine.Park(ctx, work.Token)
 	}
 

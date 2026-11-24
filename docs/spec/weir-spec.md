@@ -134,7 +134,7 @@ steps:
     kind: external
     connection: detector               # credentials live in the connection
     call: { method: POST, path: /verify, body: { incident: input.id } }
-    resume: callback                   # or: poll
+    resume: callback                   # or: poll, or: event
     timeout: 2h
     hooks:
       - on: step.succeeded
@@ -189,7 +189,7 @@ The five kinds use two mechanisms. Decide, AI and deterministic steps run now: a
 | `ai` | A sandboxed agent worker | Prompt version, allowed tools, output schema, budget | Output is rejected if it fails the schema. The run stops when the budget is spent. The full transcript is stored. |
 | `deterministic` | A worker running registered code | Handler name | Input and output are checked against the handler's declared types. Each attempt carries an idempotency key. |
 | `human` | A person, through the approval inbox or API | Assignee or role, timeout | The requester cannot be the approver when `not: run.requester` is set. Timeouts escalate along the declared chain. |
-| `external` | A third party, by callback or by polling | Connection, call, resume mode, timeout | A callback is accepted only with the current attempt's token. A poll repeats until a declared condition holds. |
+| `external` | A third party, by callback, by polling, or by an event it sends | Connection, call, resume mode, timeout | A callback is accepted only with the current attempt's token. A poll repeats until a declared condition holds. An event is taken only by a step whose `when` is true for it, once per run. |
 
 All five kinds share the same envelope: `input`, `output`, `retry`, `timeout`, `next`, `on_failure`, `compensate` and `hooks`. Every kind produces the same attempt record, so the audit trail does not depend on who did the work.
 
@@ -201,7 +201,18 @@ All five kinds share the same envelope: `input`, `output`, `retry`, `timeout`, `
 | `cancel` | The run ends. Completed steps that declared `compensate` are undone in reverse order | Later steps make no sense without this one, and earlier effects should not be left behind |
 | `continue` | The run carries on along `next`, with this step recorded as failed | The step is optional, such as a notification or an enrichment |
 
-A third party that cannot hold a token is matched by content instead. The step declares which fields of the inbound message must equal which values, and the engine resumes the step whose expectation matches.
+A third party that cannot hold a token is matched by content instead. The step sets `resume: event`, names the type of event it waits for, and gives a `when` expression over the event and the run's own input and steps. The engine resumes the step whose expression is true, and the event becomes the step's output. The call is optional: a step may wait for an event that an earlier step, or a person, caused.
+
+```yaml
+  - id: merged
+    kind: external
+    resume: event
+    event: github.pull_request
+    when: event.data.action == "closed" && event.data.number == steps.open_pr.output.number
+    timeout: 7d
+```
+
+A step that starts waiting also looks back over the events received since its run started, so an event that arrives first is not lost.
 
 ## Spending as few tokens as possible
 

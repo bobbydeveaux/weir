@@ -46,7 +46,7 @@ erDiagram
 | What is running | `runs`, `steps`, `attempts`, `human_tasks`, `timers` | Current state |
 | What happened | `events`, `ai_calls`, `tool_calls`, `blobs` | The audit record |
 | Getting things out | `outbox`, `hook_deliveries` | Wake-ups and outbound hooks |
-| Getting things in | `triggers`, `trigger_stats`, `inbound_events` | What starts a run |
+| Getting things in | `triggers`, `trigger_stats`, `inbound_events`, `event_waits` | What starts a run, and what moves one that is waiting |
 | Operations | `workers` | Which workers are alive and what they can do |
 
 ## What can run
@@ -189,6 +189,8 @@ erDiagram
 **`trigger_stats`** — daily counts per trigger: matched, dropped by the rule, dropped by the classifier, and started. Events that are dropped are counted here and not stored.
 
 **`inbound_events`** — only the events that started or resumed a run, with a dedupe key.
+
+**`event_waits`** — one row for each attempt that waits for an event: its workspace, its run and the type of event. An arriving event reads the open rows for its type to find the steps to try. The row is kept once the wait is over, with the event the step took, so that a run does not take one event twice.
 
 ## Rules the database enforces
 

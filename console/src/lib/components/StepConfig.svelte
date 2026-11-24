@@ -171,6 +171,13 @@
 				<dd>
 					{#if step.resume}<span class="mono">{step.resume}</span>{:else}<span class="muted">not set</span>{/if}
 				</dd>
+				{#if step.event}
+					<dt>Waits for</dt>
+					<dd>
+						<span class="mono">{step.event}</span>
+						{#if step.when}when <span class="mono">{step.when}</span>{/if}
+					</dd>
+				{/if}
 				{#if step.poll}
 					<dt>Poll</dt>
 					<dd>

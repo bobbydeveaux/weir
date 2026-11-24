@@ -29,10 +29,10 @@ Then follow [the support inbox example](examples/support-inbox), which classifie
 | `decide` steps | One label from a closed list; an unsure, wrong or failed answer becomes the default. Answered by a small model or a decision model (Jev, Gemini Decisions), chosen per step |
 | `ai` steps | A pinned prompt, a budget, output checked against a JSON Schema, documents the agent may read, files it may write, a prepared working directory, a sandboxed shell, and tools |
 | `human` steps | An inbox, outcomes, timeouts, escalation, values sent with a decision, and a requester who cannot approve their own run |
-| `external` steps | Call a third party, then resume on a callback with a one-time token, or poll until a condition holds |
+| `external` steps | Call a third party, then resume on a callback with a one-time token, or poll until a condition holds. Or wait for an event that is about this run, such as GitHub saying a pull request was merged |
 | Tools for agents | Every call goes through a proxy that checks it against the step's list and records it. Tools come from the server, from a workspace's MCP servers, and for GitHub |
 | Connections | A named address per workspace, HTTP or MCP, with a credential named by reference and never stored |
-| Events in | An application reports what happened, or a third party posts a signed webhook; triggers start the workflows that want it. A workflow can also start on a schedule |
+| Events in | An application reports what happened, or a third party posts a signed webhook; triggers start the workflows that want it, and steps that were waiting for it move on. A workflow can also start on a schedule |
 | Events out | Hooks to an application, signed if asked, retried until delivered; and live streams of a run's events |
 | Failure | `block`, `cancel` and `continue`; undo handlers run in reverse; a blocked run can be resumed or cancelled |
 | Tokens | One per attempt, stored hashed. A late, repeated or made-up completion changes nothing |
@@ -58,7 +58,6 @@ The full list, with an issue for each item, is [docs/build/02-epics.md](docs/bui
 - **Scale to zero.** A worker polls for work, so one instance must stay running.
 - **Calling models directly.** Agents run through a command line. A runner that calls a provider's API itself, for Bedrock, Vertex AI and Azure AI Foundry beyond Claude, is not built.
 - **Running an agent on AWS.** An agent can run in a container of its own with Docker, on Kubernetes or as a Cloud Run job. Fargate and AgentCore are not built.
-- **Waiting for an event.** An event can start a run. It cannot move one that is already waiting, so a workflow cannot yet wait for GitHub to say a pull request was merged.
 - **An agent image per application.** One image serves every agent on a server.
 - **Pipes as packages.** The parts exist (connections, webhooks, tools), and GitHub has all three, but there is no installable package or catalogue.
 - **Parallel steps, fan-out and sub-workflows.** Steps run one at a time.
@@ -250,6 +249,37 @@ triggers:
 - The shared secret is named by reference and never stored, like a connection's credential. One workspace's secret does not verify another's webhooks.
 
 Not yet: Slack's signature scheme, and refusing an old request that is replayed without a delivery id.
+
+### Waiting for an event
+
+An event can also move a run that is already going. A step says which event it waits for, and the run stops there until one arrives. There is [an example to run](examples/wait-for-merge).
+
+```yaml
+- id: merged
+  kind: external
+  resume: event
+  event: github.pull_request            # the type of event to wait for
+  when: event.data.action == "closed"
+        && event.data.pull_request.html_url == steps.open_pr.output.pull_request.url
+  timeout: 7d
+  next:
+    - when: "!output.data.pull_request.merged"   # closed without being merged
+      go: tidy_up
+```
+
+- **`when` says which event is this run's.** It sees the event and the run's own input and steps, so a run takes only the event that is about it. It is required: without it, one event would move every run waiting for that type. A step that means that writes `when: "true"`.
+- **The event becomes the step's output:** `type`, `id`, `source`, `sent_by` and `data`. Later steps and the step's own `next` rules read it, which is how a run goes one way for a merge and another for a pull request closed without one.
+- **A timeout is required.** When it passes, the step fails as any other does, and `on_failure` decides what happens to the run.
+- **An event that came first is not missed.** A step that starts waiting looks back over events received since its run started, so it does not matter whether the pull request is merged before or after the step is reached. A run takes any one event once.
+- **Starting and resuming are separate.** One event can start the workflows whose triggers match it and move on the steps that were waiting for it. `POST /v1/events`, `GET /v1/events` and the Events page say what each event started and what it resumed.
+- **The step may call first.** Give it a `connection` and a `call` as well, and Weir makes the call and then waits for the event. This is for a third party that reports back with a webhook and cannot return a token.
+- **A person can stand in for the sender.** On a Weir the sender cannot reach, such as one on a laptop, post the same event by hand to `POST /v1/events`. The step's record says who sent it.
+
+Not yet:
+
+- If the server stops between recording an event and moving the steps that wanted it, those steps are not moved, and the sender's retry is treated as a repeat. They wait until their timeout.
+- A step that starts waiting looks back over at most the latest 1,000 events of its type.
+- An event whose data lacks a field that `when` reads matches nothing, and is listed against that step with the reason.
 
 ### Where files are kept
 

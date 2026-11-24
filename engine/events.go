@@ -42,11 +42,14 @@ type EventResult struct {
 	// then the runs it started that first time.
 	Duplicate bool        `json:"duplicate"`
 	Runs      []Triggered `json:"runs"`
+	// Resumed are the steps that were waiting for this event and took it.
+	Resumed []Resumed `json:"resumed"`
 }
 
-// Emit records an event and starts a run of every workflow in this workspace
-// whose live version has a trigger that matches it. An event nothing is
-// waiting for is recorded and starts nothing; that is not an error.
+// Emit records an event, starts a run of every workflow in this workspace
+// whose live version has a trigger that matches it, and moves on every step
+// that was waiting for it. The two are separate: an event can do both. An
+// event nothing wants is recorded and does nothing; that is not an error.
 func (e *Engine) Emit(ctx context.Context, ev Event, actor string) (*EventResult, error) {
 	if ev.Type == "" {
 		return nil, errors.New("an event needs a type")
@@ -59,8 +62,8 @@ func (e *Engine) Emit(ctx context.Context, ev Event, actor string) (*EventResult
 		return nil, fmt.Errorf("the event's data is not valid JSON: %w", err)
 	}
 
-	out := &EventResult{Runs: []Triggered{}}
-	var started string
+	out := &EventResult{Runs: []Triggered{}, Resumed: []Resumed{}}
+	var started, resumed string
 	err := e.pool.QueryRow(ctx, `
 		INSERT INTO inbound_events (workspace_id, type, source, key, data, sent_by)
 		VALUES ($1::uuid, $2, $3, NULLIF($4, ''), $5::jsonb, $6)
@@ -69,12 +72,15 @@ func (e *Engine) Emit(ctx context.Context, ev Event, actor string) (*EventResult
 	if errors.Is(err, pgx.ErrNoRows) {
 		// Seen before: report what it did then.
 		err = e.pool.QueryRow(ctx, `
-			SELECT id::text, started::text FROM inbound_events
-			WHERE workspace_id = $1::uuid AND type = $2 AND key = $3`, e.workspace, ev.Type, ev.ID).Scan(&out.ID, &started)
+			SELECT id::text, started::text, resumed::text FROM inbound_events
+			WHERE workspace_id = $1::uuid AND type = $2 AND key = $3`, e.workspace, ev.Type, ev.ID).Scan(&out.ID, &started, &resumed)
 		if err != nil {
 			return nil, err
 		}
 		out.Duplicate = true
+		if err := json.Unmarshal([]byte(resumed), &out.Resumed); err != nil {
+			return nil, err
+		}
 		return out, json.Unmarshal([]byte(started), &out.Runs)
 	}
 	if err != nil {
@@ -126,8 +132,15 @@ func (e *Engine) Emit(ctx context.Context, ev Event, actor string) (*EventResult
 		}
 		out.Runs = append(out.Runs, t)
 	}
+	out.Resumed, err = e.resumeWaiting(ctx, inboundEvent{id: out.ID, typ: ev.Type, source: ev.Source, key: ev.ID,
+		sentBy: actor, data: string(ev.Data)})
+	if err != nil {
+		return nil, err
+	}
 	raw, _ := json.Marshal(out.Runs)
-	_, err = e.pool.Exec(ctx, `UPDATE inbound_events SET started = $2::jsonb WHERE id = $1::uuid`, out.ID, string(raw))
+	moved, _ := json.Marshal(out.Resumed)
+	_, err = e.pool.Exec(ctx, `UPDATE inbound_events SET started = $2::jsonb, resumed = $3::jsonb WHERE id = $1::uuid`,
+		out.ID, string(raw), string(moved))
 	return out, err
 }
 
@@ -165,7 +178,7 @@ func (e *Engine) Events(ctx context.Context, limit int) (json.RawMessage, error)
 		limit = 50
 	}
 	return e.list(ctx, `
-		SELECT id, type, source, key, data, sent_by, received_at, started AS runs
+		SELECT id, type, source, key, data, sent_by, received_at, started AS runs, resumed
 		FROM inbound_events WHERE workspace_id = $1::uuid ORDER BY received_at DESC LIMIT $2`, e.workspace, limit)
 }
 

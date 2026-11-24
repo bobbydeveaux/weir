@@ -46,7 +46,7 @@
 			<div class="panel-body"><div class="skeleton" style="height: 50px"></div></div>
 		{:else if byEvent.length === 0}
 			<div class="empty">
-				<strong>No workflow is waiting for an event</strong>
+				<strong>No workflow starts on an event</strong>
 				Add a <code class="mono">triggers:</code> block to a workflow, with the <code class="mono">event</code> it should start on.
 			</div>
 		{:else}
@@ -121,7 +121,7 @@
 			<div class="table-wrap">
 				<table class="table">
 					<thead>
-						<tr><th>Event</th><th>From</th><th>Received</th><th>Started</th><th>Data</th></tr>
+						<tr><th>Event</th><th>From</th><th>Received</th><th>Started or resumed</th><th>Data</th></tr>
 					</thead>
 					<tbody>
 						{#each events.data as e (e.id)}
@@ -138,9 +138,19 @@
 												<span class="tag write" title={r.error}>{r.namespace}/{r.name} could not start</span>
 											{/if}
 										</div>
-									{:else}
-										<span class="muted">nothing: no trigger matched</span>
 									{/each}
+									{#each e.resumed ?? [] as r (r.run_id + '/' + r.step)}
+										<div class="mono">
+											{#if r.error}
+												<span class="tag write" title={r.error}>{r.step} could not be checked</span>
+											{:else}
+												<a href="/runs/{r.run_id}">resumed {r.step} · {shortId(r.run_id)}</a>
+											{/if}
+										</div>
+									{/each}
+									{#if !e.runs?.length && !e.resumed?.length}
+										<span class="muted">nothing: no trigger matched and no step was waiting</span>
+									{/if}
 								</td>
 								<td class="data"><Json value={e.data} max={90} /></td>
 							</tr>
