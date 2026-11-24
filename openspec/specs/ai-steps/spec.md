@@ -33,7 +33,7 @@ The step's schema SHALL be passed to the model as the shape its answer must take
 - **AND** with the default failure policy the run is `blocked`
 
 ### Requirement: A step's budget is a limit on what its agent may spend
-The step's `budget.usd` SHALL be given to the model's command line as the most the call may spend. A step whose call cost more than its budget SHALL fail with the error type `budget_exceeded`, SHALL NOT be tried again, and its cost SHALL still be counted. `budget.minutes`, when set, SHALL limit how long the agent may run.
+The step's `budget.usd` SHALL be given to Claude's command line as the most the call may spend. Codex's command line takes no such limit, so a Codex call runs to its end. A step whose call cost more than its budget SHALL fail with the error type `budget_exceeded`, SHALL NOT be tried again, and its cost SHALL still be counted. `budget.minutes`, when set, SHALL limit how long the agent may run.
 
 #### Scenario: The budget is passed on
 - **WHEN** a step with `budget: { usd: 15 }` runs on Claude
@@ -43,6 +43,11 @@ The step's `budget.usd` SHALL be given to the model's command line as the most t
 - **WHEN** a call for a step with a budget of 1 dollar comes back having cost 2 dollars
 - **THEN** the step fails with the error type `budget_exceeded`
 - **AND** 2 dollars is added to what the run has spent
+
+#### Scenario: A Codex step costs more than it allows
+- **WHEN** a Codex step with a budget of 1 dollar and `retry: { attempts: 3 }` ends with an estimated cost of 2 dollars
+- **THEN** the step fails with the error type `budget_exceeded`
+- **AND** the Codex command line is not run a second time
 
 ### Requirement: Every model call is recorded with its cost
 Each attempt at an ai step that calls a model SHALL record the call: the runner, the provider, the model, the template and its version, a hash of the prompt, the prompt as sent and the final reply, the tokens in and out, the cost, whether the cost is estimated, and how long the call took. The cost SHALL be added to what the step and the run have spent, whether the attempt succeeded or failed.

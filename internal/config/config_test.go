@@ -86,3 +86,38 @@ func TestTheDatabaseCanBeGivenInParts(t *testing.T) {
 		t.Errorf("with no database at all = %v", err)
 	}
 }
+
+func TestCodexPricesAreReadFromSettings(t *testing.T) {
+	cfg, err := FromEnv(env(map[string]string{
+		"WEIR_DATABASE_URL":           "postgres://localhost/weir",
+		"WEIR_CODEX_USD_PER_MTOK_IN":  " 1.25 ",
+		"WEIR_CODEX_USD_PER_MTOK_OUT": "10",
+	}))
+	if err != nil {
+		t.Fatalf("FromEnv: %v", err)
+	}
+	if cfg.CodexUSDPerMTokIn != 1.25 || cfg.CodexUSDPerMTokOut != 10 {
+		t.Errorf("prices = %v in, %v out; want 1.25 and 10", cfg.CodexUSDPerMTokIn, cfg.CodexUSDPerMTokOut)
+	}
+}
+
+func TestCodexHasNoPricesUnlessTheyAreSet(t *testing.T) {
+	cfg, err := FromEnv(env(map[string]string{"WEIR_DATABASE_URL": "postgres://localhost/weir"}))
+	if err != nil {
+		t.Fatalf("FromEnv: %v", err)
+	}
+	if cfg.CodexUSDPerMTokIn != 0 || cfg.CodexUSDPerMTokOut != 0 {
+		t.Errorf("prices = %v in, %v out; want none", cfg.CodexUSDPerMTokIn, cfg.CodexUSDPerMTokOut)
+	}
+}
+
+func TestABadCodexPriceIsRefusedByName(t *testing.T) {
+	for _, name := range []string{"WEIR_CODEX_USD_PER_MTOK_IN", "WEIR_CODEX_USD_PER_MTOK_OUT"} {
+		for _, bad := range []string{"cheap", "-1", "NaN", "Inf", "$2"} {
+			_, err := FromEnv(env(map[string]string{"WEIR_DATABASE_URL": "postgres://localhost/weir", name: bad}))
+			if err == nil || !strings.Contains(err.Error(), name) {
+				t.Errorf("%s=%q: err = %v, want an error naming the setting", name, bad, err)
+			}
+		}
+	}
+}

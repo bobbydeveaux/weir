@@ -36,6 +36,13 @@ Each runner returns the same outcome, so the audit record and the budget checks 
 
 **Cost with the Claude command line.** Run with `--output-format json`, it reports the cost and token usage of every run. Weir records that figure and enforces the budget against it. On a subscription token the figure is what the run would have cost at API prices, not an amount charged, so it is a sound basis for a budget and for comparing runs.
 
+**Cost with the Codex command line.** `codex exec --json` reports tokens and no cost, and has no spending cap of its own. Weir works the cost out from two settings, `WEIR_CODEX_USD_PER_MTOK_IN` and `WEIR_CODEX_USD_PER_MTOK_OUT` (US dollars for a million tokens), and records it as an estimate. There is no price table: one pair of prices is used whatever the model, and cached tokens are charged at the full price.
+
+- With both prices set, the worker compares the estimate with the step's budget when the call ends, and fails the step with `budget_exceeded` if it is over. The call is not stopped part-way, so one call can cost more than the budget.
+- Without both prices, the adapter cannot give the guarantee a budget asks for, so it refuses a call that carries one, before the command line is started. The step fails with `budget_unenforceable` and is not tried again.
+- A call with no budget, such as a `decide`, still runs without prices, and is recorded at a cost of zero.
+- An agent in a container of its own is always run by Claude: `tier: codex` is ignored there, so none of this applies to it.
+
 ## Providers
 
 A provider adapter is small: how to pass the prompt, how to name the model, how to ask for structured output, how to restrict tools, and how to read cost and usage from the output. An earlier project's adapters were 160 to 420 lines each.
@@ -61,7 +68,7 @@ The command lines do not all offer the same controls. Each adapter declares what
 | --- | --- | --- |
 | Output matches the schema | Weir passes the schema, and validates the result again | Weir validates the result itself. A failure is a failed attempt |
 | Only listed tools may be called | Weir passes the allow-list and exposes only its own tool server | The step runs only if it lists no write tools, or the definition is refused when published |
-| Cost is recorded | Read from the output | Worked out from tokens and a price table, marked as estimated |
+| Cost is recorded | Read from the output | Worked out from tokens and the prices in the server's settings, marked as estimated. With no prices, a step that has a budget is refused |
 | The agent holds no credentials | A clean environment with only its own token | The same. This never depends on the provider |
 
 The point of the last column is that a weaker provider can still be used safely for the steps that suit it, such as a read-only review, without weakening the guarantees for every step.
@@ -84,7 +91,7 @@ The earlier projects ran command lines in two ways. Three of them ran every prov
 | | `cli` runner | `api` runner |
 | --- | --- | --- |
 | Start-up time per step | A second or two for the process to start | None |
-| Stopping at the budget | Checked as usage is reported; the process is killed when the limit is passed | Checked before every model call |
+| Stopping at the budget | Claude's command line is given the budget and stops itself. Codex's has no cap: the call runs to its end and the step then fails if its estimated cost is over | Checked before every model call |
 | `decide` steps | Works, but slow for a classifier | Fast |
 | What an operator must install | Each provider's command line, at a pinned version | Nothing |
 | Credential | That provider's own sign-in or token | An API key |

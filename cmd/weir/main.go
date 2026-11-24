@@ -239,7 +239,10 @@ func (a *app) serve([]string) error {
 		if dir := a.getenv("WEIR_SECRETS_DIR"); dir != "" {
 			claude.Hidden = append(claude.Hidden, dir)
 		}
-		codex := &runner.Codex{Model: a.getenv("WEIR_CODEX_MODEL"), Env: passed}
+		// Codex reports tokens and no cost. Without prices it refuses a step
+		// that has a budget, because it could not tell when the budget was spent.
+		codex := &runner.Codex{Model: a.getenv("WEIR_CODEX_MODEL"), Env: passed,
+			USDPerMillionIn: cfg.CodexUSDPerMTokIn, USDPerMillionOut: cfg.CodexUSDPerMTokOut}
 		// A decide step goes to the provider its workflow names. Steps that
 		// name none use Jev when it has a key, and Claude's small model otherwise.
 		router := runner.Router{

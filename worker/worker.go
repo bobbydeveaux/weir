@@ -514,6 +514,10 @@ func (w *Worker) ai(ctx context.Context, work *engine.Work) error {
 		// Trying again cannot help: the server has to be set up differently.
 		return w.Engine.Fail(done, work.Token, engine.Failure{Type: "shell_unavailable", Message: err.Error(), Actor: w.ID}, call)
 	}
+	if errors.Is(err, runner.ErrNoBudget) {
+		// The same: the provider needs prices before it can hold a step to a budget.
+		return w.Engine.Fail(done, work.Token, engine.Failure{Type: "budget_unenforceable", Message: err.Error(), Actor: w.ID}, call)
+	}
 	if err != nil {
 		return w.Engine.Fail(done, work.Token, engine.Failure{Type: "runner_failed", Message: err.Error(),
 			Retryable: true, Actor: w.ID, CostUSD: res.Usage.CostUSD}, call)
