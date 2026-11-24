@@ -143,10 +143,21 @@ type Fake struct {
 	Outputs map[string][]json.RawMessage
 	// Errors makes a step's call fail.
 	Errors map[string]error
+	// Failures is the queue of errors for each ai step's calls, one for each
+	// call in turn. A nil entry lets that call through, and so does a queue
+	// that is used up. Errors, when set for the step, comes first.
+	Failures map[string][]error
 	// CostUSD is charged for every ai call.
 	CostUSD float64
+	// Costs is the queue of costs for each ai step's calls, in place of
+	// CostUSD. Each call takes the next one; the last is repeated.
+	Costs map[string][]float64
+	// DecideCostUSD is charged for every decide call.
+	DecideCostUSD float64
 	// Calls records the step id of every call made, in order.
 	Calls []string
+	// Budgets records the BudgetUSD each ai call was given, in order.
+	Budgets []float64
 }
 
 // Name implements Runner.
@@ -164,7 +175,7 @@ func (f *Fake) Decide(_ context.Context, req DecideRequest) (DecideResult, error
 	if !ok {
 		return DecideResult{}, fmt.Errorf("fake runner: no decision scripted for step %q", req.Step)
 	}
-	res.Usage = Usage{Provider: "fake", Model: "fake-small"}
+	res.Usage = Usage{Provider: "fake", Model: "fake-small", CostUSD: f.DecideCostUSD}
 	return res, nil
 }
 
@@ -173,9 +184,22 @@ func (f *Fake) Run(_ context.Context, req RunRequest) (RunResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.Calls = append(f.Calls, req.Step)
+	f.Budgets = append(f.Budgets, req.BudgetUSD)
 	usage := Usage{Provider: "fake", Model: "fake-large", CostUSD: f.CostUSD, TokensIn: 100, TokensOut: 50}
+	if costs := f.Costs[req.Step]; len(costs) > 0 {
+		usage.CostUSD = costs[0]
+		if len(costs) > 1 {
+			f.Costs[req.Step] = costs[1:]
+		}
+	}
 	if err := f.Errors[req.Step]; err != nil {
 		return RunResult{Usage: usage}, err
+	}
+	if failures := f.Failures[req.Step]; len(failures) > 0 {
+		f.Failures[req.Step] = failures[1:]
+		if failures[0] != nil {
+			return RunResult{Usage: usage}, failures[0]
+		}
 	}
 	queue := f.Outputs[req.Step]
 	if len(queue) == 0 {
@@ -187,6 +211,10 @@ func (f *Fake) Run(_ context.Context, req RunRequest) (RunResult, error) {
 	}
 	return RunResult{Output: out, Transcript: "scripted", Usage: usage}, nil
 }
+
+// ErrBudget is returned, wrapped, by a runner that stopped a call because it
+// had spent what BudgetUSD allowed. Trying again would only spend more.
+var ErrBudget = errors.New("the call was stopped at its budget")
 
 // ErrNotBuilt is returned by a runner that is selected but not implemented yet.
 var ErrNotBuilt = errors.New("this runner is not built yet")

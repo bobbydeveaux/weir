@@ -34,7 +34,7 @@ Each runner returns the same outcome, so the audit record and the budget checks 
 | Cost | From the provider's JSON output where it reports one; otherwise worked out from tokens and a price table, and marked as estimated |
 | Every tool call | Recorded by Weir's tool proxy, not taken from the provider |
 
-**Cost with the Claude command line.** Run with `--output-format json`, it reports the cost and token usage of every run. Weir records that figure and enforces the budget against it. On a subscription token the figure is what the run would have cost at API prices, not an amount charged, so it is a sound basis for a budget and for comparing runs.
+**Cost with the Claude command line.** Run with `--output-format json`, it reports the cost and token usage of every run. Weir records that figure and enforces the budget against it. Before each call Weir works out what the call may spend (what the step's budget has left after its earlier attempts, or what the run has left if that is less) and passes it as `--max-budget-usd`. When the command line stops there it reports `error_max_budget_usd`, and the step fails with `budget_exceeded` and is not retried. This has been tested against a stand-in for the command line, not seen from the real one. The command line stops once it has passed the limit, so a call can cost a little more than it was allowed. On a subscription token the figure is what the run would have cost at API prices, not an amount charged, so it is a sound basis for a budget and for comparing runs.
 
 **Cost with the Codex command line.** `codex exec --json` reports tokens and no cost, and has no spending cap of its own. Weir works the cost out from two settings, `WEIR_CODEX_USD_PER_MTOK_IN` and `WEIR_CODEX_USD_PER_MTOK_OUT` (US dollars for a million tokens), and records it as an estimate. There is no price table: one pair of prices is used whatever the model, and cached tokens are charged at the full price.
 
@@ -91,7 +91,7 @@ The earlier projects ran command lines in two ways. Three of them ran every prov
 | | `cli` runner | `api` runner |
 | --- | --- | --- |
 | Start-up time per step | A second or two for the process to start | None |
-| Stopping at the budget | Claude's command line is given the budget and stops itself. Codex's has no cap: the call runs to its end and the step then fails if its estimated cost is over | Checked before every model call |
+| Stopping at the budget | Claude's command line is told the most the call may spend, which is the least of what the step and the run have left, and stops itself. Codex's has no cap: the call runs to its end and the step then fails if its estimated cost is over | Checked before every model call |
 | `decide` steps | Works, but slow for a classifier | Fast |
 | What an operator must install | Each provider's command line, at a pinned version | Nothing |
 | Credential | That provider's own sign-in or token | An API key |

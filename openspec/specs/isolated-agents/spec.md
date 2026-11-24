@@ -29,7 +29,11 @@ The container SHALL fetch its job with `GET /v1/agent/{token}/job`. When the ste
 
 #### Scenario: What a job holds
 - **WHEN** a container fetches its job
-- **THEN** it gets the prompt, the model Weir chose, the output schema, the budget, the tools the step lists and the limits on what it may write
+- **THEN** it gets the prompt, the model Weir chose, the output schema, the most its call may spend, the tools the step lists and the limits on what it may write
+
+#### Scenario: The job carries what the run has left
+- **WHEN** a step with a budget of 1 dollar runs in a container, in a run that has 0.48 dollars left
+- **THEN** the agent in the container is told to stop at 0.48 dollars
 
 #### Scenario: A prepared directory reaches the agent
 - **WHEN** a step's workspace handler writes `main.go` on the worker

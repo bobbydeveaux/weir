@@ -528,22 +528,24 @@ steps:
 }
 
 func TestARunStopsWhenItsBudgetIsSpent(t *testing.T) {
+	// A decide step has no budget of its own and its call is not capped, so
+	// it is the one step that can still finish having taken a run past its
+	// budget. The run stops there, and carries on when given more.
 	h := newHarness(t)
-	h.template("fix")
-	h.fake.Outputs["fix"] = []json.RawMessage{json.RawMessage(`{"branch": "b"}`)}
-	h.fake.CostUSD = 6
+	h.template("triage")
+	h.fake.Decisions["triage"] = runner.DecideResult{Label: "fix", Confidence: 0.9}
+	h.fake.DecideCostUSD = 6
 	h.publish(`
 weir: "0.1"
 namespace: test
 name: budget
 budget: { usd: 5 }
 steps:
-  - id: fix
-    kind: ai
-    prompt: fix@1
-    output:
-      schema: { type: object, required: [branch] }
-    budget: { usd: 10 }
+  - id: triage
+    kind: decide
+    template: triage@1
+    labels: [fix, ignore]
+    default: ignore
   - id: after
     kind: deterministic
     handler: core.noop
@@ -556,6 +558,9 @@ steps:
 	if errorType(v.Error) != "budget_exceeded" {
 		t.Fatalf("run error = %s, want budget_exceeded", v.Error)
 	}
+	if s := step(v, "triage"); s == nil || s.Status != "succeeded" {
+		t.Fatalf("triage = %+v, want it finished", s)
+	}
 	if s := step(v, "after"); s != nil {
 		t.Fatal("a step ran after the budget was spent")
 	}
@@ -567,6 +572,160 @@ steps:
 	}
 	h.settle()
 	wantStatus(t, h.run(id), "succeeded")
+}
+
+// budgeted publishes a workflow of one ai step, fix, with a budget of 5
+// dollars and three attempts, in a run with the budget given (none when
+// empty), and starts a run of it.
+func (h *harness) budgeted(name, runBudget string) string {
+	h.t.Helper()
+	h.template("fix")
+	h.publish(`
+weir: "0.1"
+namespace: test
+name: ` + name + `
+` + runBudget + `
+steps:
+  - id: fix
+    kind: ai
+    prompt: fix@1
+    output:
+      schema: { type: object, required: [branch] }
+    budget: { usd: 5 }
+    retry: { attempts: 3 }
+`)
+	return h.start(name, "alice", `{}`)
+}
+
+// wantBlockedOnBudget checks that the run stopped because fix failed on a
+// budget, and returns the step's error message.
+func wantBlockedOnBudget(t *testing.T, v *engine.RunView) string {
+	t.Helper()
+	wantStatus(t, v, "blocked")
+	if errorType(v.Error) != "budget_exceeded" {
+		t.Errorf("run error = %s, want budget_exceeded", v.Error)
+	}
+	s := step(v, "fix")
+	if s == nil || s.Status != "failed" || errorType(s.Error) != "budget_exceeded" {
+		t.Fatalf("fix = %+v, want it failed with budget_exceeded", s)
+	}
+	return string(s.Error)
+}
+
+func TestACallMaySpendNoMoreThanItsRunHasLeft(t *testing.T) {
+	h := newHarness(t)
+	h.fake.Outputs["fix"] = []json.RawMessage{json.RawMessage(`{"branch": "b"}`)}
+	h.fake.CostUSD = 0.5
+	id := h.budgeted("runcap", "budget: { usd: 1 }")
+	h.settle()
+
+	wantStatus(t, h.run(id), "succeeded")
+	if len(h.fake.Budgets) != 1 || h.fake.Budgets[0] != 1 {
+		t.Fatalf("the call was allowed %v, want one call allowed 1: the run has 1 dollar, whatever the step's 5", h.fake.Budgets)
+	}
+}
+
+func TestACallThatCostsMoreThanItsRunHadLeftFailsItsStep(t *testing.T) {
+	// The scripted runner cannot stop itself, so this is caught after the call.
+	h := newHarness(t)
+	h.fake.Outputs["fix"] = []json.RawMessage{json.RawMessage(`{"branch": "b"}`)}
+	h.fake.CostUSD = 2
+	id := h.budgeted("overrun", "budget: { usd: 1 }")
+	h.settle()
+
+	v := h.run(id)
+	if msg := wantBlockedOnBudget(t, v); !strings.Contains(msg, "the run's budget") {
+		t.Errorf("the error does not say which budget: %s", msg)
+	}
+	if len(h.fake.Calls) != 1 {
+		t.Errorf("calls = %v, want one: a step that overspent is not tried again", h.fake.Calls)
+	}
+	if v.SpentUSD != 2 {
+		t.Errorf("spent = %v, want 2: the cost still counts", v.SpentUSD)
+	}
+}
+
+func TestAStepsBudgetCoversAllItsAttempts(t *testing.T) {
+	h := newHarness(t)
+	// The first call fails having cost 3. The second costs the 2 that is
+	// left and gives an answer that does not fit the schema. Both would be
+	// tried again, and there is nothing left to try with.
+	h.fake.Failures = map[string][]error{"fix": {errors.New("the model was unavailable")}}
+	h.fake.Costs = map[string][]float64{"fix": {3, 2}}
+	h.fake.Outputs["fix"] = []json.RawMessage{json.RawMessage(`{"wrong": 1}`)}
+	id := h.budgeted("attempts", "")
+	h.settle()
+
+	v := h.run(id)
+	msg := wantBlockedOnBudget(t, v)
+	if len(h.fake.Budgets) != 2 || h.fake.Budgets[0] != 5 || h.fake.Budgets[1] != 2 {
+		t.Fatalf("the calls were allowed %v, want [5 2]: the second attempt has what the first left", h.fake.Budgets)
+	}
+	if !strings.Contains(msg, "no model call was made") || !strings.Contains(msg, "the step's budget") {
+		t.Errorf("the error does not say that no call was made, and on which budget: %s", msg)
+	}
+	if s := step(v, "fix"); s.Attempts != 3 {
+		t.Errorf("attempts = %d, want 3: the third was refused before any call", s.Attempts)
+	}
+	if v.SpentUSD != 5 {
+		t.Errorf("spent = %v, want 5", v.SpentUSD)
+	}
+
+	// Resuming gives the step more attempts, and no more money: its budget
+	// is what the definition says. The run stops again, at no cost.
+	if err := h.eng.Resume(h.ctx, id, "ops", 0); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	h.settle()
+	v = h.run(id)
+	wantBlockedOnBudget(t, v)
+	if len(h.fake.Calls) != 2 || v.SpentUSD != 5 {
+		t.Errorf("after a resume: calls = %v and spent = %v, want no new call and 5", h.fake.Calls, v.SpentUSD)
+	}
+}
+
+func TestACallThatFailsAtItsBudgetIsNotTriedAgain(t *testing.T) {
+	t.Run("having spent all it was allowed", func(t *testing.T) {
+		h := newHarness(t)
+		h.fake.Errors["fix"] = errors.New("the command line gave up")
+		h.fake.CostUSD = 5
+		id := h.budgeted("atcap", "")
+		h.settle()
+
+		v := h.run(id)
+		wantBlockedOnBudget(t, v)
+		if len(h.fake.Calls) != 1 {
+			t.Errorf("calls = %v, want one, whatever the step's three attempts", h.fake.Calls)
+		}
+		if v.SpentUSD != 5 {
+			t.Errorf("spent = %v, want 5: the cost still counts", v.SpentUSD)
+		}
+	})
+	t.Run("because the runner says it stopped there", func(t *testing.T) {
+		h := newHarness(t)
+		h.fake.Errors["fix"] = fmt.Errorf("%w: stopped early", runner.ErrBudget)
+		h.fake.CostUSD = 1
+		id := h.budgeted("stopped", "")
+		h.settle()
+
+		wantBlockedOnBudget(t, h.run(id))
+		if len(h.fake.Calls) != 1 {
+			t.Errorf("calls = %v, want one", h.fake.Calls)
+		}
+	})
+	t.Run("a failure short of the budget is still tried again", func(t *testing.T) {
+		h := newHarness(t)
+		h.fake.Failures = map[string][]error{"fix": {errors.New("the model was unavailable")}}
+		h.fake.Outputs["fix"] = []json.RawMessage{json.RawMessage(`{"branch": "b"}`)}
+		h.fake.CostUSD = 1
+		id := h.budgeted("short", "")
+		h.settle()
+
+		wantStatus(t, h.run(id), "succeeded")
+		if len(h.fake.Budgets) != 2 || h.fake.Budgets[1] != 4 {
+			t.Errorf("the calls were allowed %v, want [5 4]", h.fake.Budgets)
+		}
+	})
 }
 
 func TestOutputThatFailsItsSchemaIsRejected(t *testing.T) {

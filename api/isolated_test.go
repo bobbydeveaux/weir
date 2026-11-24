@@ -233,6 +233,26 @@ func TestAnAgentInItsOwnContainerTalksOnlyToWeir(t *testing.T) {
 	if v, _ := eng.Run(ctx, runID); v.Status == "succeeded" || !strings.Contains(string(mustJSON(v)), "the model refused") {
 		t.Errorf("an agent that failed: %s", mustJSON(v))
 	}
+
+	// What a call may spend travels in the job. The run has half a dollar
+	// and its first call costs 0.02, so the second agent is told to stop at
+	// 0.48, whatever its step's budget of a dollar.
+	model.fail = nil
+	capped := strings.Replace(workspaceWorkflow, "name: fix\n", "name: capped\nbudget: { usd: 0.5 }\n", 1)
+	if _, err := eng.Publish(ctx, []byte(capped), "test"); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	runID, _, err = eng.StartRun(ctx, engine.StartRequest{Namespace: "code", Name: "capped", Requester: "alice", Input: json.RawMessage(`{"repo": "acme/shop"}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drain(w)
+	if v, _ := eng.Run(ctx, runID); v.Status != "succeeded" {
+		t.Fatalf("run = %s", mustJSON(v))
+	}
+	if got := model.seen.BudgetUSD; got < 0.4799 || got > 0.4801 {
+		t.Errorf("the agent in the container was allowed %v, want 0.48: what its run had left", got)
+	}
 }
 
 // failing is a runner that must never be used.

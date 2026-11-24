@@ -96,6 +96,27 @@ func TestClaudeReportsTheCommandLinesOwnError(t *testing.T) {
 	}
 }
 
+func TestClaudeSaysWhenItStoppedAtItsBudget(t *testing.T) {
+	stopped := `{"is_error":true,"subtype":"error_max_budget_usd","result":"budget reached","total_cost_usd":5}`
+	for name, exit := range map[string]error{"exiting cleanly": nil, "exiting badly": errors.New("exit status 1")} {
+		var args []string
+		var stdin string
+		res, err := fakeClaude(stopped, exit, &args, &stdin).Run(context.Background(), RunRequest{Prompt: "x", BudgetUSD: 5})
+		if !errors.Is(err, ErrBudget) {
+			t.Errorf("%s: err = %v, want ErrBudget", name, err)
+		}
+		if res.Usage.CostUSD != 5 {
+			t.Errorf("%s: cost = %v, want 5", name, res.Usage.CostUSD)
+		}
+	}
+	var args []string
+	var stdin string
+	other := `{"is_error":true,"subtype":"error_during_execution","result":"it broke","total_cost_usd":1}`
+	if _, err := fakeClaude(other, nil, &args, &stdin).Run(context.Background(), RunRequest{Prompt: "x", BudgetUSD: 5}); err == nil || errors.Is(err, ErrBudget) {
+		t.Errorf("err = %v, want an error that is not ErrBudget", err)
+	}
+}
+
 func TestClaudeDecideAsksForOneOfTheLabels(t *testing.T) {
 	var args []string
 	var stdin string

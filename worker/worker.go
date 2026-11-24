@@ -447,13 +447,20 @@ func (w *Worker) ai(ctx context.Context, work *engine.Work) error {
 	if st.Output != nil {
 		req.Schema, _ = json.Marshal(st.Output.Schema)
 	}
-	if st.Budget != nil {
-		req.BudgetUSD = st.Budget.USD
-		if st.Budget.Minutes > 0 {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, time.Duration(st.Budget.Minutes*float64(time.Minute)))
-			defer cancel()
-		}
+	// A budget is a limit on the money, so it is settled before any is spent:
+	// the call may spend what the step and the run have left, and no more.
+	allowed, limited, of := allowance(work)
+	if limited && allowed < cent {
+		return w.Engine.Fail(context.WithoutCancel(ctx), work.Token, engine.Failure{Type: "budget_exceeded",
+			Message: "no model call was made: nothing is left of " + of, Actor: w.ID})
+	}
+	if limited {
+		req.BudgetUSD = allowed
+	}
+	if st.Budget != nil && st.Budget.Minutes > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(st.Budget.Minutes*float64(time.Minute)))
+		defer cancel()
 	}
 	if st.Tools != nil {
 		// The agent is told about only the tools this step lists, and reaches
@@ -518,13 +525,22 @@ func (w *Worker) ai(ctx context.Context, work *engine.Work) error {
 		// The same: the provider needs prices before it can hold a step to a budget.
 		return w.Engine.Fail(done, work.Token, engine.Failure{Type: "budget_unenforceable", Message: err.Error(), Actor: w.ID}, call)
 	}
+	if err != nil && (errors.Is(err, runner.ErrBudget) || limited && res.Usage.CostUSD >= allowed-cent) {
+		// The call was stopped at its limit, or failed having spent all it
+		// was allowed. Another attempt would have nothing left to spend.
+		return w.Engine.Fail(done, work.Token, engine.Failure{Type: "budget_exceeded",
+			Message: fmt.Sprintf("the call failed after spending $%.2f of the $%.2f it was allowed by %s: %s",
+				res.Usage.CostUSD, allowed, of, err),
+			Actor: w.ID, CostUSD: res.Usage.CostUSD}, call)
+	}
 	if err != nil {
 		return w.Engine.Fail(done, work.Token, engine.Failure{Type: "runner_failed", Message: err.Error(),
 			Retryable: true, Actor: w.ID, CostUSD: res.Usage.CostUSD}, call)
 	}
-	if st.Budget != nil && st.Budget.USD > 0 && res.Usage.CostUSD > st.Budget.USD {
+	if limited && res.Usage.CostUSD > allowed {
+		// A runner that cannot stop itself is caught here, after the money has gone.
 		return w.Engine.Fail(done, work.Token, engine.Failure{Type: "budget_exceeded",
-			Message: fmt.Sprintf("the step spent $%.2f of a $%.2f budget", res.Usage.CostUSD, st.Budget.USD),
+			Message: fmt.Sprintf("the call spent $%.2f, and was allowed $%.2f by %s", res.Usage.CostUSD, allowed, of),
 			Actor:   w.ID, CostUSD: res.Usage.CostUSD}, call)
 	}
 	// What the agent wrote is kept before the step completes, and recorded as
@@ -550,6 +566,29 @@ func (w *Worker) ai(ctx context.Context, work *engine.Work) error {
 		w.Engine.DropFiles(done, kept)
 	}
 	return err
+}
+
+// cent is the smallest amount a call can be held to: a runner is told its
+// limit in dollars and cents. It is also the rounding allowed when asking
+// whether a call that failed had spent all it was allowed.
+const cent = 0.01
+
+// allowance is the most one model call of this attempt may spend: what the
+// step's budget has left after its earlier attempts, or what the run has
+// left, whichever is less. limited is false when neither has a budget, and
+// of names the budget that set the figure, for a person to read.
+func allowance(work *engine.Work) (usd float64, limited bool, of string) {
+	if b := work.Step.Budget; b != nil && b.USD > 0 {
+		usd, limited = b.USD-work.StepSpentUSD, true
+		of = fmt.Sprintf("the step's budget of $%.2f", b.USD)
+		if work.StepSpentUSD > 0 {
+			of += fmt.Sprintf(" (its earlier attempts spent $%.2f)", work.StepSpentUSD)
+		}
+	}
+	if left := work.RunLeftUSD; left != nil && (!limited || *left < usd) {
+		usd, limited, of = *left, true, "the run's budget"
+	}
+	return usd, limited, of
 }
 
 // files gathers what one entry of a step's files gives its agent: every file

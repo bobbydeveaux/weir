@@ -223,7 +223,7 @@ How work is claimed, held and returned.
 - [ ] Provider settings per workspace (#26)
 - [x] The `fake` runner, for tests and the examples
 - [x] Every model call recorded: template version, prompt hash, tokens, cost (marked measured or notional), duration
-- [x] Budget check before each call, and a budget error that stops the step
+- [x] A limit on every model call of an `ai` step, settled before the call: what its step's budget has left after earlier attempts, or what its run has left if that is less. With nothing left no call is made. A call that fails at its limit, or costs more, is a budget error that stops the step and is not retried (#129). Not done: a runner with no limit of its own (Codex) is only checked when the call comes back; a `decide` call is not limited, and its run is blocked afterwards; resuming does not give a step more money, so a run blocked on a step's own budget cannot go on; Claude's report of stopping at its limit is tested against a stand-in, not seen from the real command line
 - [ ] Routing an AI step to a tier by a `decide` (tiers exist, and a step names its tier by hand) (#27)
 - [ ] A fallback provider for `decide`, used when the first one fails (today a failure becomes the default label) (#28)
 - [ ] Shadow mode for routing (#29)
@@ -288,7 +288,7 @@ How work is claimed, held and returned.
 ### 14. Examples and conformance
 
 - [ ] The three website examples as real workflows in `examples/`, each with a test (the support inbox is there and has been run for real; it has no automated test, and the other two are not written) (#45)
-- [x] A spec for everything that is built, kept with OpenSpec in `openspec/specs/`: 28 capabilities and 290 requirements, each with scenarios. Beside each spec a `proof.md` names the test that proves each requirement, or says that none does: 253 name a test and 37 are marked not tested. `make spec` checks the form of the specs and that every test named exists, on a laptop and in CI. Not yet: the 37 requirements with no test; and a named test is checked to exist, not to assert what the row says (#125)
+- [x] A spec for everything that is built, kept with OpenSpec in `openspec/specs/`: 28 capabilities and 294 requirements, each with scenarios. Beside each spec a `proof.md` names the test that proves each requirement, or says that none does: 257 name a test and 37 are marked not tested. `make spec` checks the form of the specs and that every test named exists, on a laptop and in CI. Not yet: the 37 requirements with no test; and a named test is checked to exist, not to assert what the row says (#125)
 - [ ] A conformance suite: a definition, its inputs, and the event log it must produce (#46)
 - [x] Crash tests: kill a worker mid-step; send a completion twice; let a lease expire
 - [ ] A quickstart that gets a new reader from clone to a finished run (#47)

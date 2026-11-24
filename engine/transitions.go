@@ -25,14 +25,17 @@ type stepRow struct {
 	input        string
 	attemptsMade int
 	maxAttempts  int
+	// spent is what every attempt of this step so far has cost.
+	spent float64
 }
 
 func (e *Engine) loadStep(ctx context.Context, tx pgx.Tx, stepID string) (*stepRow, error) {
 	s := &stepRow{id: stepID}
 	err := tx.QueryRow(ctx, `
-		SELECT run_id::text, step_key, kind, status, compensates::text, input::text, attempts_made, max_attempts
+		SELECT run_id::text, step_key, kind, status, compensates::text, input::text, attempts_made, max_attempts,
+			spent_usd::float8
 		FROM steps WHERE id = $1::uuid FOR UPDATE`, stepID).
-		Scan(&s.runID, &s.key, &s.kind, &s.status, &s.compensates, &s.input, &s.attemptsMade, &s.maxAttempts)
+		Scan(&s.runID, &s.key, &s.kind, &s.status, &s.compensates, &s.input, &s.attemptsMade, &s.maxAttempts, &s.spent)
 	if err != nil {
 		return nil, fmt.Errorf("load step %s: %w", stepID, err)
 	}
@@ -284,6 +287,12 @@ type Work struct {
 	Template *Template
 	// Connection is set for external steps: where to call, and how to sign in.
 	Connection Endpoint
+	// StepSpentUSD is what the earlier attempts of this step cost. A step's
+	// budget covers all its attempts, so this comes off it before a call.
+	StepSpentUSD float64
+	// RunLeftUSD is what the run may still spend, as it stood when the step
+	// was claimed. It is nil for a run with no budget.
+	RunLeftUSD *float64
 }
 
 // Claim takes the next runnable step of one of the given kinds and returns it
@@ -320,7 +329,11 @@ func (e *Engine) Claim(ctx context.Context, kinds []string, workerID string, lea
 			return e.failRun(ctx, tx, run, failure("definition_invalid", err.Error()))
 		}
 		w := &Work{RunID: run.id, StepID: step.id, Attempt: step.attemptsMade + 1, Step: *st,
-			Input: json.RawMessage(step.input), Requester: run.requester, IdempotencyKey: step.id}
+			Input: json.RawMessage(step.input), Requester: run.requester, IdempotencyKey: step.id, StepSpentUSD: step.spent}
+		if run.budget != nil {
+			left := *run.budget - run.spent
+			w.RunLeftUSD = &left
+		}
 		switch st.Kind {
 		case spec.KindDecide:
 			w.Template, err = e.loadTemplate(ctx, tx, run.workspace, st.Template)
