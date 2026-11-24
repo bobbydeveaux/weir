@@ -183,3 +183,46 @@ func TestAWorkflowDrivenEntirelyOverHTTP(t *testing.T) {
 		t.Fatalf("an unknown run = %d, want 404", code)
 	}
 }
+
+// A run has no time limit, so a publisher who sets one must be told.
+func TestPublishingSaysWhatIsNotEnforced(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	pool := testdb.New(ctx, t)
+	eng, err := engine.New(ctx, pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := worker.NewRegistry()
+	eng.HandlerExists = reg.Exists
+	apiServer := httptest.NewServer(api.New(eng, reg))
+	defer apiServer.Close()
+	c := client{t: t, base: apiServer.URL}
+
+	const steps = `
+steps:
+  - id: work
+    kind: deterministic
+    handler: core.noop
+`
+	notEnforced := func(name, top string) string {
+		t.Helper()
+		code, out := c.do("POST", "/v1/definitions", "ops", "weir: \"0.1\"\nnamespace: shop\nname: "+name+"\n"+top+steps)
+		if code != http.StatusCreated {
+			t.Fatalf("publish %s = %d %v", name, code, out)
+		}
+		list, _ := out["not_yet_enforced"].([]any)
+		parts := make([]string, len(list))
+		for i, p := range list {
+			parts[i], _ = p.(string)
+		}
+		return strings.Join(parts, " ")
+	}
+
+	if got, want := notEnforced("timed", "budget: { usd: 5, minutes: 30 }\ntiers: { fast: { model: small } }"), "tiers budget.minutes"; got != want {
+		t.Errorf("not_yet_enforced = %q, want %q", got, want)
+	}
+	if got := notEnforced("priced", "budget: { usd: 5 }"); got != "" {
+		t.Errorf("not_yet_enforced = %q for a budget in dollars alone, want nothing", got)
+	}
+}

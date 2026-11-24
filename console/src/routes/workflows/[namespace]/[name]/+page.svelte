@@ -78,7 +78,6 @@
 					<Time at={d.published_at} /> · {steps.length}
 					{steps.length === 1 ? 'step' : 'steps'}
 					{#if d.spec.budget?.usd}· run budget <b class="mono">{money(d.spec.budget.usd)}</b>{/if}
-					{#if d.spec.budget?.minutes}· <b class="mono">{d.spec.budget.minutes} min</b>{/if}
 				</p>
 			{/if}
 		</div>
@@ -164,9 +163,8 @@
 								<dt>Budget</dt>
 								<dd>
 									{#if d.spec.budget?.usd || d.spec.budget?.minutes}
-										{#if d.spec.budget.usd}<span class="mono">{money(d.spec.budget.usd)}</span>{/if}
-										{#if d.spec.budget.minutes}<span class="mono">{d.spec.budget.minutes} min</span>{/if}
-										<span class="muted">per run</span>
+										{#if d.spec.budget.usd}<span class="mono">{money(d.spec.budget.usd)}</span> <span class="muted">per run</span>{/if}
+										{#if d.spec.budget.minutes}<span class="mono">{d.spec.budget.minutes} min</span> <span class="muted">not enforced: a run has no time limit</span>{/if}
 									{:else}
 										<span class="muted">none</span>
 									{/if}
@@ -184,9 +182,25 @@
 								<h2>Run input schema</h2>
 								<Json value={d.spec.input.schema} max={260} />
 							{/if}
-							{#if d.spec.triggers !== undefined || d.spec.tiers !== undefined || d.spec.hooks !== undefined}
+							{#if d.spec.triggers !== undefined || d.spec.hooks !== undefined}
+								<h2>Triggers and hooks</h2>
+								<Json
+									value={{
+										...(d.spec.triggers !== undefined ? { triggers: d.spec.triggers } : {}),
+										...(d.spec.hooks !== undefined ? { hooks: d.spec.hooks } : {})
+									}}
+									max={220}
+								/>
+							{/if}
+							{#if d.spec.tiers !== undefined || d.spec.budget?.minutes}
 								<h2>Accepted, not yet enforced</h2>
-								<Json value={{ triggers: d.spec.triggers, tiers: d.spec.tiers, hooks: d.spec.hooks }} max={220} />
+								<Json
+									value={{
+										...(d.spec.tiers !== undefined ? { tiers: d.spec.tiers } : {}),
+										...(d.spec.budget?.minutes ? { budget: { minutes: d.spec.budget.minutes } } : {})
+									}}
+									max={220}
+								/>
 							{/if}
 						</div>
 					{/if}

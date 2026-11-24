@@ -51,11 +51,11 @@ type Definition struct {
 	Budget    *Budget `yaml:"budget,omitempty" json:"budget,omitempty"`
 	Steps     []Step  `yaml:"steps" json:"steps"`
 
-	// Accepted so that documents written against the full spec still parse.
-	// The engine does not act on these yet; Unsupported reports any that are set.
 	// Triggers say which events start a run of this workflow.
 	Triggers []Trigger `yaml:"triggers,omitempty" json:"triggers,omitempty"`
-	Tiers    any       `yaml:"tiers,omitempty" json:"tiers,omitempty"`
+	// Tiers is accepted so that documents written against the full spec still
+	// parse. The engine does not act on it yet; Unsupported reports it when set.
+	Tiers any `yaml:"tiers,omitempty" json:"tiers,omitempty"`
 	// Hooks tell an application when something happens to a run.
 	Hooks []Hook `yaml:"hooks,omitempty" json:"hooks,omitempty"`
 }
@@ -65,7 +65,9 @@ type Schema struct {
 	Schema map[string]any `yaml:"schema" json:"schema"`
 }
 
-// Budget limits spend.
+// Budget limits spend, and for a step how long its agent may run. A run has no
+// time limit: Minutes on a definition's own budget is not acted on, and
+// Unsupported reports it.
 type Budget struct {
 	USD     float64 `yaml:"usd,omitempty" json:"usd,omitempty"`
 	Minutes float64 `yaml:"minutes,omitempty" json:"minutes,omitempty"`
@@ -797,6 +799,10 @@ func (d *Definition) Unsupported() []string {
 	var out []string
 	if d.Tiers != nil {
 		out = append(out, "tiers")
+	}
+	// A step's budget.minutes is enforced by the worker. The run's is not.
+	if d.Budget != nil && d.Budget.Minutes > 0 {
+		out = append(out, "budget.minutes")
 	}
 	for _, s := range d.Steps {
 		if s.Hooks != nil {

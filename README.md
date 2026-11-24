@@ -61,7 +61,7 @@ The full list, with an issue for each item, is [docs/build/02-epics.md](docs/bui
 - **An agent image per application.** One image serves every agent on a server.
 - **Pipes as packages.** The parts exist (connections, webhooks, tools), and GitHub has all three, but there is no installable package or catalogue.
 - **Parallel steps, fan-out and sub-workflows.** Steps run one at a time.
-- **Tiers and sandbox settings in a definition.** They parse, and publishing says they are not enforced.
+- **Tiers, sandbox settings and a time limit on a whole run.** `tiers`, a step's `sandbox` and `minutes` in a definition's top-level `budget` parse, and publishing says they are not enforced. A run has no time limit. A step's own `budget.minutes` is enforced.
 - **A tagged release.** There is no version yet, and the contract will change before `v0.1.0`.
 
 Some of what is built has not met the real service it is for. Tested against a stand-in only, or not run at all: starting an agent as a Cloud Run job; the GitHub tools that write (the commit handler that opens a pull request is proven); the decision models; Bedrock, Vertex AI and gateways; buckets other than a local S3 stand-in; and anything on Linux outside a container. The to-do list says which, item by item.
