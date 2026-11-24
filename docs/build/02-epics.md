@@ -158,6 +158,7 @@ The state machine, with no workers yet.
 - [x] Compensation in reverse order on `cancel`
 - [x] Resume a blocked run from the failed step, keeping completed results
 - [x] Budget accounting at run and step level
+- [x] Publishing says that `minutes` in a definition's top-level `budget` is not enforced, as it does for `tiers` and a step's `sandbox`. A run still has no time limit; a step's own `budget.minutes` is enforced (#128)
 - [x] Cancelling a run, and blocked runs counted apart from active ones
 - [ ] Undo completed steps when a run is cancelled (today a cancelled run leaves them as they are) (#9)
 

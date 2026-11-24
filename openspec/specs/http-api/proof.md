@@ -5,7 +5,7 @@ Which test proves each requirement. `make spec` checks that every requirement is
 | Requirement | Proven by |
 | --- | --- |
 | The API says it is up | `api/auth_test.go:TestKeysDecideWhoMayDoWhat`, `api/front_test.go:TestBehindASignInProxy` (the 200 is asserted; the body is not) |
-| Definitions are published and read | `api/api_test.go:TestAWorkflowDrivenEntirelyOverHTTP`, `api/views_test.go:TestWorkspacesAreKeptApartAndCanBeRead` (the 201, the version, the list and the source are asserted; `not_yet_enforced` and `?version=` are not) |
+| Definitions are published and read | `api/api_test.go:TestAWorkflowDrivenEntirelyOverHTTP`, `api/views_test.go:TestWorkspacesAreKeptApartAndCanBeRead`, `api/api_test.go:TestPublishingSaysWhatIsNotEnforced` (the 201, the version, the list, the source and `not_yet_enforced` are asserted; `?version=` is not) |
 | Templates are published and read | `api/api_test.go:TestAWorkflowDrivenEntirelyOverHTTP`, `api/views_test.go:TestWorkspacesAreKeptApartAndCanBeRead` (publishing and the list are asserted; the 400 for a missing prompt and `GET /v1/templates/{key}` are not) |
 | A run is started | `api/api_test.go:TestAWorkflowDrivenEntirelyOverHTTP`, `engine/engine_test.go:TestStartingTwiceWithTheSameKeyReturnsTheSameRun` (the 201 is asserted over HTTP; the same run coming back for the same key is asserted on the engine, and the 200 is not) |
 | Runs are read, listed and counted | `api/api_test.go:TestAWorkflowDrivenEntirelyOverHTTP`, `api/views_test.go:TestWorkspacesAreKeptApartAndCanBeRead`, `api/auth_test.go:TestKeysDecideWhoMayDoWhat` (the filters, the record and the usage totals are asserted; the limit of 200 is not) |

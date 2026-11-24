@@ -82,7 +82,7 @@ A `next` rule MAY send a run back to a step it has already been through. Each ti
 - **THEN** the run shows `fix` twice, as visit 1 and visit 2
 
 ### Requirement: A run's budget is a limit on what it spends
-A definition MAY set `budget.usd`. The engine SHALL add the cost of every model call to the run's spend, including calls made by attempts that failed. When a step finishes and the run has spent more than its budget, the engine SHALL set the run to `blocked` with the error type `budget_exceeded`, and no further step SHALL run. A run with no budget has no limit.
+A definition MAY set `budget.usd`. The engine SHALL add the cost of every model call to the run's spend, including calls made by attempts that failed. When a step finishes and the run has spent more than its budget, the engine SHALL set the run to `blocked` with the error type `budget_exceeded`, and no further step SHALL run. A run with no budget has no limit. No run has a time limit: a definition's top-level `budget.minutes` is not acted on.
 
 #### Scenario: A step spends more than the budget
 - **WHEN** a run has a budget of $5 and its first step costs $6
@@ -92,6 +92,10 @@ A definition MAY set `budget.usd`. The engine SHALL add the cost of every model 
 #### Scenario: Spend is shown on the run
 - **WHEN** a run's only model call cost $3.20
 - **THEN** the run shows `spent_usd` as 3.20
+
+#### Scenario: A run takes longer than the minutes in its budget
+- **WHEN** a definition's top-level budget sets `minutes: 30` and a run of it lasts longer
+- **THEN** the run is not stopped for it
 
 ### Requirement: The budget is checked between steps
 The engine SHALL NOT hand out a step of a run whose budget is already spent: that step fails with the error type `budget_exceeded`. The budget is checked when a step finishes and before the next is handed out; a step that is already running MUST NOT be interrupted by it.

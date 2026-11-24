@@ -153,3 +153,77 @@ func TestParseDuration(t *testing.T) {
 		t.Error(`ParseDuration("soon") succeeded`)
 	}
 }
+
+const acceptedNotEnforced = `
+weir: "0.1"
+namespace: test
+name: limits
+budget: { usd: 5, minutes: 30 }
+tiers:
+  fast: { model: small }
+steps:
+  - id: fix
+    kind: ai
+    prompt: fix@1
+    output: { schema: { type: object } }
+    budget: { usd: 2, minutes: 10 }
+    tools:
+      read: [files.read]
+      approve: [git.push]
+    sandbox: { network: none }
+    hooks: { before: [lint] }
+`
+
+func TestUnsupportedNamesWhatIsAcceptedButNotEnforced(t *testing.T) {
+	def, err := Parse([]byte(acceptedNotEnforced))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if err := def.Validate(ValidateOptions{}); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	got := def.Unsupported()
+	want := []string{"tiers", "budget.minutes", "steps.fix.hooks", "steps.fix.sandbox", "steps.fix.tools.approve"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Fatalf("Unsupported() = %v, want %v", got, want)
+	}
+}
+
+func TestUnsupportedLeavesOutABudgetThatIsEnforced(t *testing.T) {
+	for name, source := range map[string]string{
+		"a run's budget in dollars alone": `
+weir: "0.1"
+namespace: test
+name: dollars
+budget: { usd: 5 }
+steps:
+  - id: work
+    kind: deterministic
+    handler: core.noop
+`,
+		// The worker stops an agent that runs longer than its step's minutes.
+		"a step's minutes": `
+weir: "0.1"
+namespace: test
+name: step-minutes
+budget: { usd: 5 }
+steps:
+  - id: fix
+    kind: ai
+    prompt: fix@1
+    output: { schema: { type: object } }
+    budget: { usd: 2, minutes: 10 }
+`,
+	} {
+		def, err := Parse([]byte(source))
+		if err != nil {
+			t.Fatalf("%s: Parse: %v", name, err)
+		}
+		if err := def.Validate(ValidateOptions{}); err != nil {
+			t.Fatalf("%s: Validate: %v", name, err)
+		}
+		if got := def.Unsupported(); len(got) != 0 {
+			t.Errorf("%s: Unsupported() = %v, want nothing", name, got)
+		}
+	}
+}
