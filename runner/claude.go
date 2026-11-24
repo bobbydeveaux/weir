@@ -379,11 +379,19 @@ func (c *Claude) call(ctx context.Context, system, prompt, model string, schema 
 	if out.usage.Model == "" {
 		out.usage.Model = model
 	}
+	if errors.Is(parseErr, ErrBudget) {
+		// Said in the output, so it holds however the program exited.
+		return out, parseErr
+	}
 	if err != nil {
 		return out, fmt.Errorf("claude: %w", err)
 	}
 	return out, parseErr
 }
+
+// claudeStoppedAtBudget is the kind of result the command line reports when
+// it stops a call at --max-budget-usd.
+const claudeStoppedAtBudget = "error_max_budget_usd"
 
 // parseClaude reads the JSON the command line prints with --output-format json.
 func parseClaude(raw []byte) (claudeOutput, error) {
@@ -412,6 +420,9 @@ func parseClaude(raw []byte) (claudeOutput, error) {
 	for model := range result.ModelUsage {
 		out.usage.Model = model // the model that actually answered
 		break
+	}
+	if result.Subtype == claudeStoppedAtBudget {
+		return out, fmt.Errorf("%w: the command line reported an error (%s): %s", ErrBudget, result.Subtype, result.Result)
 	}
 	if result.IsError {
 		return out, fmt.Errorf("the command line reported an error (%s): %s", result.Subtype, result.Result)

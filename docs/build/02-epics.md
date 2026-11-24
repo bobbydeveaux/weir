@@ -223,7 +223,7 @@ How work is claimed, held and returned.
 - [ ] Provider settings per workspace (#26)
 - [x] The `fake` runner, for tests and the examples
 - [x] Every model call recorded: template version, prompt hash, tokens, cost (marked measured or notional), duration
-- [x] Budget check before each call, and a budget error that stops the step
+- [x] A limit on every model call of an `ai` step, settled before the call: what its step's budget has left after earlier attempts, or what its run has left if that is less. With nothing left no call is made. A call that fails at its limit, or costs more, is a budget error that stops the step and is not retried (#129). Not done: a runner with no limit of its own (Codex) is only checked when the call comes back; a `decide` call is not limited, and its run is blocked afterwards; resuming does not give a step more money, so a run blocked on a step's own budget cannot go on; Claude's report of stopping at its limit is tested against a stand-in, not seen from the real command line
 - [ ] Routing an AI step to a tier by a `decide` (tiers exist, and a step names its tier by hand) (#27)
 - [ ] A fallback provider for `decide`, used when the first one fails (today a failure becomes the default label) (#28)
 - [ ] Shadow mode for routing (#29)
