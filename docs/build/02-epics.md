@@ -288,7 +288,7 @@ How work is claimed, held and returned.
 ### 14. Examples and conformance
 
 - [ ] The three website examples as real workflows in `examples/`, each with a test (the support inbox is there and has been run for real; it has no automated test, and the other two are not written) (#45)
-- [x] A spec for everything that is built, kept with OpenSpec in `openspec/specs/`: 28 capabilities and 287 requirements, each with scenarios. Beside each spec a `proof.md` names the test that proves each requirement, or says that none does: 250 name a test and 37 are marked not tested. `make spec` checks the form of the specs and that every test named exists, on a laptop and in CI. Not yet: the 37 requirements with no test; and a named test is checked to exist, not to assert what the row says (#125)
+- [x] A spec for everything that is built, kept with OpenSpec in `openspec/specs/`: 28 capabilities and 290 requirements, each with scenarios. Beside each spec a `proof.md` names the test that proves each requirement, or says that none does: 253 name a test and 37 are marked not tested. `make spec` checks the form of the specs and that every test named exists, on a laptop and in CI. Not yet: the 37 requirements with no test; and a named test is checked to exist, not to assert what the row says (#125)
 - [ ] A conformance suite: a definition, its inputs, and the event log it must produce (#46)
 - [x] Crash tests: kill a worker mid-step; send a completion twice; let a lease expire
 - [ ] A quickstart that gets a new reader from clone to a finished run (#47)
