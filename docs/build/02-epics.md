@@ -198,6 +198,7 @@ How work is claimed, held and returned.
 - [x] Make the call, then park the step under its token
 - [x] A callback endpoint that accepts the token and validates the payload against the output schema
 - [x] Poll mode: repeat until a declared condition holds
+- [x] A poll step's timeout is enforced: once it has passed, the step fails with the error type `timeout` and its `on_failure` decides what happens to the run. It is checked when a poll comes back, so a step can run over by up to one poll interval. A poll step need not set a timeout, and one that sets none still polls for ever. The time is counted from the first poll since the step last failed, so a step that is retried or resumed gets its whole timeout again (#127)
 - [x] A fake third party for tests
 - [x] Credentials on a connection, held by reference and never stored: `env:NAME` and `file:name`, sent as a bearer token, a header or basic auth, on every call made through the connection (external steps, files, tools, hooks, MCP). A workspace can name only its own secrets. Tested against stand-in servers; not yet used against a real third party (#17)
 - [x] An ID token from the machine's own identity as a connection credential (`id-token`), for one cloud service calling another with no secret at all. Google Cloud only, and off unless `WEIR_ID_TOKENS=google`; not AWS or Azure, and not limited by workspace (#18)
@@ -285,7 +286,7 @@ How work is claimed, held and returned.
 ### 14. Examples and conformance
 
 - [ ] The three website examples as real workflows in `examples/`, each with a test (the support inbox is there and has been run for real; it has no automated test, and the other two are not written) (#45)
-- [x] A spec for everything that is built, kept with OpenSpec in `openspec/specs/`: 28 capabilities and 286 requirements, each with scenarios. Beside each spec a `proof.md` names the test that proves each requirement, or says that none does: 247 name a test and 39 are marked not tested. `make spec` checks the form of the specs and that every test named exists, on a laptop and in CI. Not yet: the 39 requirements with no test; and a named test is checked to exist, not to assert what the row says (#125)
+- [x] A spec for everything that is built, kept with OpenSpec in `openspec/specs/`: 28 capabilities and 287 requirements, each with scenarios. Beside each spec a `proof.md` names the test that proves each requirement, or says that none does: 248 name a test and 39 are marked not tested. `make spec` checks the form of the specs and that every test named exists, on a laptop and in CI. Not yet: the 39 requirements with no test; and a named test is checked to exist, not to assert what the row says (#125)
 - [ ] A conformance suite: a definition, its inputs, and the event log it must produce (#46)
 - [x] Crash tests: kill a worker mid-step; send a completion twice; let a lease expire
 - [ ] A quickstart that gets a new reader from clone to a finished run (#47)

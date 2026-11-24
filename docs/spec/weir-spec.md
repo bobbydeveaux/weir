@@ -189,7 +189,7 @@ The five kinds use two mechanisms. Decide, AI and deterministic steps run now: a
 | `ai` | A sandboxed agent worker | Prompt version, allowed tools, output schema, budget | Output is rejected if it fails the schema. The run stops when the budget is spent. The full transcript is stored. |
 | `deterministic` | A worker running registered code | Handler name | Input and output are checked against the handler's declared types. Each attempt carries an idempotency key. |
 | `human` | A person, through the approval inbox or API | Assignee or role, timeout | The requester cannot be the approver when `not: run.requester` is set. Timeouts escalate along the declared chain. |
-| `external` | A third party, by callback, by polling, or by an event it sends | Connection, call, resume mode, timeout | A callback is accepted only with the current attempt's token. A poll repeats until a declared condition holds. An event is taken only by a step whose `when` is true for it, once per run. |
+| `external` | A third party, by callback, by polling, or by an event it sends | Connection, call, resume mode, timeout | A callback is accepted only with the current attempt's token. A poll repeats until a declared condition holds, or until the timeout passes, if one is set. An event is taken only by a step whose `when` is true for it, once per run. |
 
 All five kinds share the same envelope: `input`, `output`, `retry`, `timeout`, `next`, `on_failure`, `compensate` and `hooks`. Every kind produces the same attempt record, so the audit trail does not depend on who did the work.
 
