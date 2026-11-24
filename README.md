@@ -110,8 +110,19 @@ To make one real call through the Claude command line: `WEIR_TEST_CLAUDE=1 go te
 | `WEIR_SECRETS_DIR` | Directory of secret files for `file:` references, with one directory per workspace | none |
 | `WEIR_SECRET__<WORKSPACE>__<NAME>` | The value of the secret a connection in that workspace names as `env:<NAME>` | none |
 | `WEIR_CODEX_MODEL` | Model for steps with `tier: codex`, which run through the Codex command line | Codex's default |
+| `WEIR_CODEX_USD_PER_MTOK_IN`, `WEIR_CODEX_USD_PER_MTOK_OUT` | The price of a million tokens in and out on Codex, in US dollars, such as `1.25` and `10`. Codex reports tokens and no cost, so Weir works the cost out from these. A value that is not a number, or is less than zero, stops the server from starting. See "What a Codex step costs" below | none: Codex refuses a step that has a budget |
 
 The `cli` runner keeps the command line's permission checks on, offers it no built-in tools, ignores user and project settings, and passes it a short list of environment variables rather than the worker's own.
+
+### What a Codex step costs
+
+The Codex command line reports the tokens a call used, and no cost. Weir works the cost out from the two prices above and records it as an estimate.
+
+- **Set both prices before you run `tier: codex` steps.** Without both, Weir cannot tell what a Codex call costs, so it refuses any Codex step that has a budget. The step fails with the error type `budget_unenforceable` before Codex is started, and is not tried again. Every `ai` step has a budget, so that is every `ai` step sent to Codex.
+- **With both prices set,** a step whose estimated cost is more than its budget fails with `budget_exceeded`, and the estimate is added to what the run has spent.
+- **A Codex call cannot be stopped part-way.** The Codex command line has no spending cap, so a call runs to its end and may cost more than the step's budget before the step fails. A step on Claude is different: Claude's command line is given the budget and stops itself.
+- **The cost is only as right as the prices.** One pair of prices is used whatever `WEIR_CODEX_MODEL` is, and cached tokens are charged at the full price. Set the prices for the model you use.
+- **A `decide` step has no budget,** so it runs on Codex without prices. It is then recorded at a cost of zero, and adds nothing to what its run has spent.
 
 ### In a container
 

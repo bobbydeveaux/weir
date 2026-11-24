@@ -24,15 +24,17 @@ import (
 // What it cannot do yet:
 //   - Offer tools. A step that lists tools is refused, not run without them.
 //   - Report a cost. Codex reports tokens, so the cost is worked out from the
-//     prices below and marked as estimated. With no prices set it is zero, and
-//     a budget cannot stop the step.
+//     prices below and marked as estimated. With no prices it cannot tell what
+//     a call cost, so a step with a budget is refused, not run unlimited.
+//   - Stop a call part-way. The command line has no spending cap, so a call
+//     runs to its end and its cost is compared with the budget afterwards.
 type Codex struct {
 	// Command is the executable. Empty means "codex".
 	Command string
 	// Model is the model to use. Empty means the command line's default.
 	Model string
 	// USDPerMillionIn and USDPerMillionOut, when set, turn token counts into
-	// an estimated cost.
+	// an estimated cost. Both are needed before a call with a budget is run.
 	USDPerMillionIn  float64
 	USDPerMillionOut float64
 	// Env lists extra environment variables to pass through, by name.
@@ -51,8 +53,16 @@ var codexOff = []string{
 
 var codexPassThrough = []string{"PATH", "HOME", "USER", "TMPDIR", "LANG", "CODEX_HOME", "OPENAI_API_KEY"}
 
+// ErrNoBudget is returned when a call carries a budget and the provider has
+// no way to hold the call to it.
+var ErrNoBudget = errors.New("no way to enforce a budget")
+
 // Name implements Runner.
 func (c *Codex) Name() string { return "cli" }
+
+// priced says whether a call's cost can be worked out. One price alone is not
+// enough: the tokens on the other side would be counted as free.
+func (c *Codex) priced() bool { return c.USDPerMillionIn > 0 && c.USDPerMillionOut > 0 }
 
 // Run implements Runner.
 func (c *Codex) Run(ctx context.Context, req RunRequest) (RunResult, error) {
@@ -75,6 +85,10 @@ func (c *Codex) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	if len(req.Tools) > 0 {
 		return RunResult{Usage: Usage{Provider: "codex", Model: c.Model}},
 			errors.New("the Codex adapter cannot offer tools yet; run this step on a provider that can, or remove its tools")
+	}
+	if req.BudgetUSD > 0 && !c.priced() {
+		return RunResult{Usage: Usage{Provider: "codex", Model: c.Model}},
+			fmt.Errorf("%w: the Codex adapter has no prices, so it cannot tell what this step costs; whoever runs the server can set WEIR_CODEX_USD_PER_MTOK_IN and WEIR_CODEX_USD_PER_MTOK_OUT", ErrNoBudget)
 	}
 	text, usage, err := c.call(ctx, req.System, req.Prompt, req.Schema)
 	res := RunResult{Usage: usage, Transcript: text}

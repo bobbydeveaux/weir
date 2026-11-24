@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"slices"
 	"strings"
@@ -134,5 +135,70 @@ func TestCodexLive(t *testing.T) {
 	}
 	if res.Usage.TokensIn == 0 {
 		t.Errorf("no token usage was read from the event stream: %+v", res.Usage)
+	}
+}
+
+func TestCodexRefusesABudgetItCannotEnforce(t *testing.T) {
+	budgeted := RunRequest{Prompt: "review this diff", BudgetUSD: 1}
+	for name, prices := range map[string][2]float64{"no prices": {0, 0}, "only a price in": {2, 0}, "only a price out": {0, 10}} {
+		var args []string
+		var stdin string
+		c := fakeCodex(`{}`, codexEvents, &args, &stdin)
+		c.USDPerMillionIn, c.USDPerMillionOut = prices[0], prices[1]
+		res, err := c.Run(context.Background(), budgeted)
+		if !errors.Is(err, ErrNoBudget) {
+			t.Fatalf("%s: err = %v, want the step refused with ErrNoBudget", name, err)
+		}
+		for _, setting := range []string{"WEIR_CODEX_USD_PER_MTOK_IN", "WEIR_CODEX_USD_PER_MTOK_OUT"} {
+			if !strings.Contains(err.Error(), setting) {
+				t.Errorf("%s: the refusal does not name %s: %v", name, setting, err)
+			}
+		}
+		if args != nil {
+			t.Errorf("%s: the command line was started although the step should have been refused", name)
+		}
+		if res.Usage.CostUSD != 0 || res.Usage.TokensIn != 0 {
+			t.Errorf("%s: usage = %+v, want nothing spent", name, res.Usage)
+		}
+	}
+
+	// With both prices the same step runs, and its cost is tokens times prices.
+	var args []string
+	var stdin string
+	c := fakeCodex(`{"verdict": "approve"}`, codexEvents, &args, &stdin)
+	c.USDPerMillionIn, c.USDPerMillionOut = 2, 10
+	res, err := c.Run(context.Background(), budgeted)
+	if err != nil {
+		t.Fatalf("with prices: %v", err)
+	}
+	if args == nil {
+		t.Fatal("with prices: the command line was not started")
+	}
+	// 1,200 in at $2 a million plus 40 out at $10 a million.
+	if want := 0.0028; res.Usage.CostUSD < want-1e-9 || res.Usage.CostUSD > want+1e-9 || !res.Usage.CostEstimated {
+		t.Errorf("with prices: usage = %+v, want an estimated cost of %v", res.Usage, want)
+	}
+}
+
+// A call that carries no budget asks for no guarantee, so it is not refused.
+func TestCodexWithNoPricesStillRunsACallThatHasNoBudget(t *testing.T) {
+	var args []string
+	var stdin string
+	c := fakeCodex(`{"verdict": "approve"}`, codexEvents, &args, &stdin)
+	res, err := c.Run(context.Background(), RunRequest{Prompt: "review this diff"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if args == nil {
+		t.Fatal("the command line was not started")
+	}
+	if res.Usage.CostUSD != 0 || !res.Usage.CostEstimated || res.Usage.TokensIn != 1200 {
+		t.Errorf("usage = %+v, want the tokens, and a cost of zero marked as estimated", res.Usage)
+	}
+
+	c = fakeCodex(`{"label": "quick", "confidence": 0.9}`, codexEvents, &args, &stdin)
+	d, err := c.Decide(context.Background(), DecideRequest{Prompt: "thanks", Labels: []string{"quick", "considered"}})
+	if err != nil || d.Label != "quick" || d.Usage.CostUSD != 0 {
+		t.Errorf("Decide = %+v, %v; want the label and a cost of zero", d, err)
 	}
 }
