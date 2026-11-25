@@ -56,3 +56,7 @@ Run on 16 November 2026 with the `cli` runner:
 | `draft` | A three-sentence reply that did not promise a refund | claude-haiku-5-5 | 1,178 / 124 | $0.0003 | 2.4 s |
 
 The whole run cost $0.0006. Most of each step's time was the command line starting up.
+
+## What a test proves
+
+`engine/examples_test.go` runs this file as it is written, with a scripted model: a refund is drafted, the requester is refused when she approves it, and it is sent once someone else does; a message labelled `other` is filed with no agent and no cost; a rejected draft is filed.

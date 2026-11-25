@@ -1,0 +1,99 @@
+# A vulnerable library. A scanner reports a critical finding in a service. Code
+# notes how exposed the service is, an agent that can only read works out
+# whether the vulnerable function is called, a person approves the plan, a
+# second agent makes the fix, code opens the pull request, and the run is
+# finished only when the scanner no longer reports the finding.
+#
+# One run handles one service. Twelve services with the same finding are twelve
+# events and twelve runs: steps run one at a time, and there is no fan-out yet.
+#
+# It needs a connection called `scanner` for the last step. The steps that rank
+# the service and that open the pull request only echo what they would do: put
+# your own handlers in their place.
+weir: "0.1"
+namespace: examples
+name: vulnerable-library
+budget: { usd: 15.00 }
+
+triggers:
+  - event: scanner.finding
+    when: event.data.severity == "critical"
+    input:
+      finding: event.data.id
+      service: event.data.service
+      library: event.data.library
+      fixed_in: event.data.fixed_in
+      internet_facing: event.data.internet_facing
+
+steps:
+  - id: rank
+    kind: deterministic
+    handler: core.echo
+    input:
+      service: input.service
+      first: input.internet_facing
+
+  - id: assess
+    kind: ai
+    prompt: finding-assess@1
+    input:
+      service: input.service
+      library: input.library
+    output:
+      schema:
+        type: object
+        required: [called, plan]
+        additionalProperties: false
+        properties:
+          called: { type: boolean }
+          plan: { type: string }
+    budget: { usd: 2.00 }
+
+  # Whoever started the run cannot approve its plan.
+  - id: approve
+    kind: human
+    assign: { role: approver, not: run.requester }
+    next:
+      - when: outcome == "rejected"
+        go: declined
+
+  - id: fix
+    kind: ai
+    prompt: finding-fix@1
+    input:
+      service: input.service
+      library: input.library
+      fixed_in: input.fixed_in
+      plan: steps.assess.output.plan
+    output:
+      schema:
+        type: object
+        required: [branch, version]
+        additionalProperties: false
+        properties:
+          branch: { type: string }
+          version: { type: string }
+    budget: { usd: 10.00 }
+
+  - id: open_pull_request
+    kind: deterministic
+    handler: core.echo
+    input:
+      branch: steps.fix.output.branch
+      evidence: steps.assess.output.plan
+
+  # The scanner, not the agent, says the finding has gone.
+  - id: verify
+    kind: external
+    connection: scanner
+    call:
+      method: GET
+      path: /findings
+    resume: poll
+    poll: { every: 15m, until: response.status == "resolved" }
+    timeout: 7d
+    end: true
+
+  - id: declined
+    kind: deterministic
+    handler: core.noop

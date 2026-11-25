@@ -1,0 +1,92 @@
+# A bug at 2am. An error tracker reports an error, a small model decides
+# whether an agent can fix it, an agent writes the fix on a branch, the on-call
+# engineer approves it, code merges and deploys, and the run is finished only
+# when the error tracker says the error has stopped.
+#
+# It needs a connection called `errors` for the last step. The steps that open
+# an issue and that merge and deploy only echo what they would do: put your own
+# handlers in their place.
+weir: "0.1"
+namespace: examples
+name: bug-at-2am
+budget: { usd: 20.00 }
+
+# The rule costs nothing. A warning never reaches a model.
+triggers:
+  - event: errors.new
+    when: event.data.severity == "error"
+    input:
+      error: event.data.id
+      service: event.data.service
+      message: event.data.message
+
+steps:
+  - id: route
+    kind: decide
+    template: incident-route@1
+    labels: [fix, needs_human]
+    describe:
+      fix: A fault in the code that a small change would put right
+      needs_human: Anything else, such as an outage of something we depend on, or a fault that needs a decision
+    confidence: 0.8
+    default: needs_human         # if the model is unsure, a person gets it
+    next:
+      - when: label == "needs_human"
+        go: page
+
+  - id: open_issue
+    kind: deterministic
+    handler: core.echo
+    input:
+      repository: input.service
+      title: input.message
+
+  - id: fix
+    kind: ai
+    prompt: incident-fix@1
+    input:
+      service: input.service
+      message: input.message
+    output:
+      schema:
+        type: object
+        required: [branch, summary]
+        additionalProperties: false
+        properties:
+          branch: { type: string }
+          summary: { type: string }
+    budget: { usd: 15.00 }
+
+  # Until someone decides, the run is parked and costs nothing.
+  - id: approve
+    kind: human
+    assign: { role: on_call }
+    timeout: 4h
+    next:
+      - when: outcome == "rejected"
+        go: page
+
+  # The agent never held the credentials to do this.
+  - id: deploy
+    kind: deterministic
+    handler: core.echo
+    input:
+      merge: steps.fix.output.branch
+      service: input.service
+
+  # The error tracker is asked, and answers when it knows. The tool that raised
+  # the error is the one that says it has stopped.
+  - id: verify
+    kind: external
+    connection: errors
+    call:
+      path: /verify
+      body:
+        error: input.error
+    resume: callback
+    timeout: 1h
+    end: true
+
+  - id: page
+    kind: human
+    assign: { role: on_call }
