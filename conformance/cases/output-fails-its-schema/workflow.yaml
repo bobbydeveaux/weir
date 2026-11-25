@@ -1,0 +1,15 @@
+weir: "0.1"
+namespace: conformance
+name: output-fails-its-schema
+steps:
+  - id: draft
+    kind: ai
+    prompt: work@1
+    output:
+      schema:
+        type: object
+        required: [reply]
+        properties:
+          reply: { type: string }
+    budget: { usd: 1 }
+    retry: { attempts: 2 }

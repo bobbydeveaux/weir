@@ -1,0 +1,20 @@
+weir: "0.1"
+namespace: conformance
+name: budget-spent
+budget: { usd: 5 }
+steps:
+  - id: first
+    kind: ai
+    prompt: work@1
+    output: { schema: { type: object } }
+    budget: { usd: 4 }
+  - id: second
+    kind: ai
+    prompt: work@1
+    output: { schema: { type: object } }
+    budget: { usd: 4 }
+  - id: third
+    kind: ai
+    prompt: work@1
+    output: { schema: { type: object } }
+    budget: { usd: 4 }

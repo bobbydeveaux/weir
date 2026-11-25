@@ -1,0 +1,11 @@
+description: Output that does not match the step's schema is refused, the step is tried again, and the second answer is accepted.
+templates: [work]
+model:
+  outputs:
+    draft:
+      - { answer: 42 }
+      - { reply: Sorry about the kettle. }
+steps:
+  - start: { requester: alice }
+expect:
+  status: succeeded

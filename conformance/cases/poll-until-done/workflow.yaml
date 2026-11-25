@@ -1,0 +1,11 @@
+weir: "0.1"
+namespace: conformance
+name: poll-until-done
+steps:
+  - id: scan
+    kind: external
+    connection: scanner
+    call: { method: GET, path: /status }
+    resume: poll
+    poll: { until: response.status == "done" }
+    timeout: 1h

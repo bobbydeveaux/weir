@@ -1,0 +1,6 @@
+run.started
+step.ready note
+attempt.started note
+step.succeeded note
+step.waiting approve
+run.cancelled

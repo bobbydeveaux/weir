@@ -6,7 +6,7 @@ The goal is a version that runs locally, supports all five step kinds, and can b
 
 ## Where it stands
 
-Updated 24 November 2026. This file is the project's to-do list. Tick an item in the same change that finishes it.
+Updated 25 November 2026. This file is the project's to-do list. Tick an item in the same change that finishes it.
 
 A real workflow has run end to end from the command line with the Claude command line doing the model steps: a support message was classified, a reply drafted, the requester refused when she tried to approve it, and the reply sent after someone else approved. The run cost $0.0006.
 
@@ -46,7 +46,7 @@ Since then two real applications have run on it. The second is a live applicatio
 - [x] A late or repeated completion for an attempt is rejected.
 - [x] A run stops when its budget is spent.
 - [x] The person who started a run cannot approve it when the workflow says so.
-- [ ] Every run produces an event log that matches the expected log in the conformance suite.
+- [x] Every run produces an event log that matches the expected log in the conformance suite.
 - [x] Tests gate every merge in CI.
 
 ## What is deliberately not in v0.1.0
@@ -289,7 +289,7 @@ How work is claimed, held and returned.
 
 - [ ] The three website examples as real workflows in `examples/`, each with a test (the support inbox is there and has been run for real; it has no automated test, and the other two are not written) (#45)
 - [x] A spec for everything that is built, kept with OpenSpec in `openspec/specs/`: 28 capabilities and 294 requirements, each with scenarios. Beside each spec a `proof.md` names the test that proves each requirement, or says that none does: 257 name a test and 37 are marked not tested. `make spec` checks the form of the specs and that every test named exists, on a laptop and in CI. Not yet: the 37 requirements with no test; and a named test is checked to exist, not to assert what the row says (#125)
-- [ ] A conformance suite: a definition, its inputs, and the event log it must produce (#46)
+- [x] A conformance suite: a definition, its inputs, and the event log it must produce. `conformance/cases/` holds eight cases as plain files, and one test runs them all against Postgres with a scripted model. Not yet: only the type and step of each event are compared, not its actor or data; the suite runs inside Weir's own tests and not against a server over HTTP, which another implementation would need; and there are no cases for crashes, leases, compensation, hooks, schedules, files, tools or isolated agents (#46)
 - [x] Crash tests: kill a worker mid-step; send a completion twice; let a lease expire
 - [ ] A quickstart that gets a new reader from clone to a finished run (#47)
 - [x] First application on Weir: agent-demo, proven end to end locally. See [agent-demo on Weir](04-agent-demo-on-weir.md)

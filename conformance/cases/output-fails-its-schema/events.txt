@@ -1,0 +1,8 @@
+run.started
+step.ready draft
+attempt.started draft
+attempt.failed draft
+step.retrying draft
+attempt.started draft
+step.succeeded draft
+run.succeeded

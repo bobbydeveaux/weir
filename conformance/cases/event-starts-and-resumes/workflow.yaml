@@ -1,0 +1,18 @@
+weir: "0.1"
+namespace: conformance
+name: event-starts-and-resumes
+triggers:
+  - event: order.placed
+    when: event.data.total > 100
+    input: { order: event.data.id }
+steps:
+  - id: paid
+    kind: external
+    resume: event
+    event: order.paid
+    when: event.data.id == input.order
+    timeout: 1h
+  - id: ship
+    kind: deterministic
+    handler: core.echo
+    input: { ship: steps.paid.output.data.id }

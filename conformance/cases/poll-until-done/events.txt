@@ -1,0 +1,9 @@
+run.started
+step.ready scan
+attempt.started scan
+step.deferred scan
+attempt.started scan
+step.deferred scan
+attempt.started scan
+step.succeeded scan
+run.succeeded

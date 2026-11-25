@@ -1,0 +1,11 @@
+description: A classifier that answers below the step's confidence is given the default label, so no agent runs.
+templates: [route, fix]
+connections:
+  detector: []
+model:
+  decisions:
+    route: { label: fix, confidence: 0.4 }
+steps:
+  - start: { requester: alice, input: { title: Checkout is down } }
+expect:
+  status: waiting

@@ -767,6 +767,7 @@ List the credential variables your platform actually uses; the ones above are th
 | `api/` | The HTTP API |
 | `cmd/weir/` | The command line |
 | `examples/` | Workflows you can run |
+| `conformance/` | Cases that state the contract as data: a definition, its inputs, and the event log it must produce. See [its README](conformance/README.md) |
 | `openspec/` | What Weir does today, as requirements with the test that proves each |
 
 ## Licence

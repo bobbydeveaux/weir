@@ -1,0 +1,13 @@
+description: A run stops when its budget is spent. The step whose cost takes the run past its budget fails, and the step after it never starts.
+templates: [work]
+model:
+  cost_usd: 3
+  outputs:
+    first: [{ ok: true }]
+    second: [{ ok: true }]
+    third: [{ ok: true }]
+steps:
+  - start: { requester: alice }
+expect:
+  status: blocked
+  error: budget_exceeded
