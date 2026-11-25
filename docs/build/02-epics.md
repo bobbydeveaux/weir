@@ -6,7 +6,7 @@ The goal is a version that runs locally, supports all five step kinds, and can b
 
 ## Where it stands
 
-Updated 24 November 2026. This file is the project's to-do list. Tick an item in the same change that finishes it.
+Updated 25 November 2026. This file is the project's to-do list. Tick an item in the same change that finishes it.
 
 A real workflow has run end to end from the command line with the Claude command line doing the model steps: a support message was classified, a reply drafted, the requester refused when she tried to approve it, and the reply sent after someone else approved. The run cost $0.0006.
 
@@ -28,7 +28,7 @@ Since then two real applications have run on it. The second is a live applicatio
 | 11 Triggers | Mostly done | A `decide` filter in a trigger; counters; moving waiting steps on after a crash between an event being recorded and acted on |
 | 12 Hooks | Mostly done | Hooks on a single step |
 | 13 API and command line | Mostly done | Sign-in for people (the console takes a key today); a published API description; logs and metrics; the newer endpoints on the command line |
-| 14 Examples and conformance | Started | Two more examples; tests for all three; the conformance suite; tests for the 37 requirements in `openspec/specs/` that have none. Two real applications have run on Weir, which the plan did not ask for; the second is not switched over |
+| 14 Examples and conformance | Started | The conformance suite; a quickstart; tests for the 37 requirements in `openspec/specs/` that have none. Two real applications have run on Weir, which the plan did not ask for; the second is not switched over |
 | 15 Release | Started | The repository is public. No tagged version yet |
 | 16 Pipes | Started | GitHub is the first: signed webhooks in, tools, a GitHub App to sign in with, a checkout and a commit that opens a pull request, proven against the real GitHub. Left: the package format, Slack, and connecting from the console |
 | 17 Running in the cloud | Started | Images, a Helm chart, and agents as Kubernetes Jobs or Cloud Run jobs are built. Nothing is deployed, and the Cloud Run launcher has not met the real service. Left: scale to zero, long steps off the request, guides for each cloud, AWS |
@@ -39,8 +39,8 @@ Since then two real applications have run on it. The second is a live applicatio
 `v0.1.0` is done when all of this is true on a laptop, with one command to start it.
 
 - [ ] `docker compose up` starts Postgres and Weir, and `weir` on the command line can publish a workflow, start a run and show its status.
-- [ ] The three worked examples from the website run end to end: a bug at 2am, a support inbox, and a vulnerable library.
-- [ ] Each example uses a fake model and fake third parties in tests, so the suite needs no keys and costs nothing.
+- [x] The three worked examples from the website run end to end: a bug at 2am, a support inbox, and a vulnerable library.
+- [x] Each example uses a fake model and fake third parties in tests, so the suite needs no keys and costs nothing.
 - [x] One example can also be run against a real model provider by setting a key.
 - [x] Killing a worker in the middle of a step does not lose or duplicate the step.
 - [x] A late or repeated completion for an attempt is rejected.
@@ -287,7 +287,7 @@ How work is claimed, held and returned.
 
 ### 14. Examples and conformance
 
-- [ ] The three website examples as real workflows in `examples/`, each with a test (the support inbox is there and has been run for real; it has no automated test, and the other two are not written) (#45)
+- [x] The three website examples as real workflows in `examples/`, each with a test: `support-inbox`, `bug-at-2am` and `vulnerable-library`. `engine/examples_test.go` runs each file as it is written, with a scripted model and stand-in third parties, down every path it has. Not yet: only the support inbox has been run with a real model; the agents in the other two have no tools, and their steps that open an issue, deploy, rank and open a pull request only echo; ranking several services against each other needs fan-out, and nothing requires a written reason to override an assessment (#45)
 - [x] A spec for everything that is built, kept with OpenSpec in `openspec/specs/`: 28 capabilities and 294 requirements, each with scenarios. Beside each spec a `proof.md` names the test that proves each requirement, or says that none does: 257 name a test and 37 are marked not tested. `make spec` checks the form of the specs and that every test named exists, on a laptop and in CI. Not yet: the 37 requirements with no test; and a named test is checked to exist, not to assert what the row says (#125)
 - [ ] A conformance suite: a definition, its inputs, and the event log it must produce (#46)
 - [x] Crash tests: kill a worker mid-step; send a completion twice; let a lease expire

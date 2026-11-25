@@ -19,6 +19,8 @@ export WEIR_DATABASE_URL='postgres://weir:weir@localhost:54329/weir?sslmode=disa
 
 Then follow [the support inbox example](examples/support-inbox), which classifies a message, drafts a reply, waits for a person to approve it, and sends it.
 
+Two more examples start from an event and use all five kinds of step: [a bug at 2am](examples/bug-at-2am) and [a vulnerable library](examples/vulnerable-library). A test runs all three as they are written, with a scripted model, so they need no key.
+
 ## What works today
 
 | Area | What is built |
