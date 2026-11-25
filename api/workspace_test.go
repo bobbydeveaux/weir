@@ -226,9 +226,10 @@ func TestAChangeToAForbiddenPathFailsTheStepAndKeepsNothing(t *testing.T) {
 		t.Errorf("a test file alone: step %s, %d file(s): %s", status, files, detail)
 	}
 	for name, change := range map[string]runner.File{
-		"is not one of the paths":                      {Name: "api/server.go", Data: []byte("package api\n")},
-		"may never change":                             {Name: "billing/charge_test.go", Data: []byte("package billing\n")},
-		"is protected":                                 {Name: ".github/workflows/ci_test.go", Data: []byte("x")},
+		"is not one of the paths": {Name: "api/server.go", Data: []byte("package api\n")},
+		"may never change":        {Name: "billing/charge_test.go", Data: []byte("package billing\n")},
+		"is protected":            {Name: ".github/workflows/ci_test.go", Data: []byte("x")},
+
 		"is not one of the paths this step may change": {Name: "old.go", Deleted: true},
 	} {
 		// The allowed file comes first: one bad change still means nothing is kept.
