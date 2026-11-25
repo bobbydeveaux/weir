@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"os/signal"
@@ -76,6 +77,8 @@ Environment:
   WEIR_PUBLIC_URL    Address third parties use to reach the API (default http://localhost:8080)
   WEIR_RUNNER        How ai and decide steps run: cli, api or fake (default cli)
   WEIR_ADMIN_KEY     Turns authentication on, and is the key that may do anything
+  WEIR_ADMIN_KEY_FILE
+                     A file holding the admin key, in place of WEIR_ADMIN_KEY. Read once at start
   WEIR_WORKER        off: answer the API and leave the work to another server on the same database
   WEIR_CONSOLE_DIR   Directory of the console's files, to serve the console from this server
   WEIR_PROXY_USER_HEADER
@@ -231,6 +234,14 @@ func (a *app) migrate([]string) error {
 }
 
 func (a *app) serve([]string) error {
+	// With an admin key set, every request must carry a key. Without one the
+	// API trusts whoever calls it, which is only safe on a trusted network.
+	// It is checked before the database is opened, so that a wrong setting
+	// stops the server at once.
+	adminKey, err := readAdminKey(a.getenv)
+	if err != nil {
+		return err
+	}
 	eng, cfg, done, err := a.engine()
 	if err != nil {
 		return err
@@ -365,15 +376,7 @@ func (a *app) serve([]string) error {
 		eng.Files = blob.NewPostgres(eng.Pool())
 	}
 
-	// With an admin key set, every request must carry a key. Without one the
-	// API trusts whoever calls it, which is only safe on a trusted network.
-	adminKey := a.getenv("WEIR_ADMIN_KEY")
 	access := "API keys are required"
-	if adminKey == "" && a.getenv("WEIR_REQUIRE_ADMIN_KEY") != "" {
-		// A server that anyone can reach must never start open by accident.
-		// The container image sets this; a laptop does not.
-		return errors.New("WEIR_ADMIN_KEY is not set, and this server is set to refuse to run without one (WEIR_REQUIRE_ADMIN_KEY)")
-	}
 	if adminKey == "" {
 		access = "WARNING: no WEIR_ADMIN_KEY is set, so anyone who can reach this API can do anything"
 	}
@@ -798,6 +801,40 @@ func (a *app) apiOptions(adminKey string) []api.Option {
 		opts = append(opts, api.WithPrefix(prefix))
 	}
 	return opts
+}
+
+// readAdminKey reads the key that may do anything, from WEIR_ADMIN_KEY or from
+// the file WEIR_ADMIN_KEY_FILE names. A file suits a platform that hands out
+// secrets as files, and keeps the key out of the environment. No error here
+// repeats a setting's value: a key put in the wrong setting must not be
+// printed.
+func readAdminKey(getenv func(string) string) (string, error) {
+	key, path := getenv("WEIR_ADMIN_KEY"), getenv("WEIR_ADMIN_KEY_FILE")
+	if key != "" && path != "" {
+		return "", errors.New("WEIR_ADMIN_KEY and WEIR_ADMIN_KEY_FILE are both set; set only one of them")
+	}
+	if path != "" {
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			// The error names the path, which is the setting's value: give
+			// only the reason.
+			var pathErr *fs.PathError
+			if errors.As(err, &pathErr) {
+				err = pathErr.Err
+			}
+			return "", fmt.Errorf("WEIR_ADMIN_KEY_FILE: the file it names could not be read: %w", err)
+		}
+		// A file written by hand or by a secret store often ends in a newline.
+		if key = strings.TrimSpace(string(contents)); key == "" {
+			return "", errors.New("WEIR_ADMIN_KEY_FILE: the file it names is empty; it must hold the admin key")
+		}
+	}
+	if key == "" && getenv("WEIR_REQUIRE_ADMIN_KEY") != "" {
+		// A server that anyone can reach must never start open by accident.
+		// The container image sets this; a laptop does not.
+		return "", errors.New("neither WEIR_ADMIN_KEY nor WEIR_ADMIN_KEY_FILE is set, and this server is set to refuse to run without an admin key (WEIR_REQUIRE_ADMIN_KEY)")
+	}
+	return key, nil
 }
 
 // works reads WEIR_WORKER: whether this server does the work as well as
