@@ -18,7 +18,7 @@ helm install weir deploy/helm/weir --namespace weir \
   --set existingSecret=weir --set agents.secret=model-credential
 ```
 
-Use your cluster's own way of making those Secrets if it has one: External Secrets Operator, Sealed Secrets, a cloud's secret store driver.
+Use your cluster's own way of making those Secrets if it has one: External Secrets Operator or Sealed Secrets. To read secrets straight from a cloud's secret manager with no Secret in between, see "Secret files from a volume" below.
 
 ## What it makes
 
@@ -36,7 +36,10 @@ Use your cluster's own way of making those Secrets if it has one: External Secre
 | Value | Meaning | Default |
 |---|---|---|
 | `image.repository`, `image.tag` | The server's image. The tag defaults to the chart's `appVersion` | `ghcr.io/bobbydeveaux/weir` |
-| `existingSecret` | A Secret whose keys become the server's environment. It must hold `WEIR_ADMIN_KEY`, and the database unless that is signed in to with IAM | none |
+| `existingSecret` | A Secret whose keys become the server's environment. It holds `WEIR_ADMIN_KEY` unless `secretFiles.adminKey` gives it, and the database unless that is signed in to with IAM | none |
+| `secretFiles.volume` | A volume of secret files, copied as written into the pod: a Secret, a CSI volume or a projected volume. Mounted read-only, with `WEIR_SECRETS_DIR` set to it | none |
+| `secretFiles.mountPath` | Where the volume is mounted | `/etc/weir/secrets` |
+| `secretFiles.adminKey` | The file at the top of the volume that holds the admin key. Sets `WEIR_ADMIN_KEY_FILE` | none |
 | `env` | Any other setting, by name | none |
 | `databaseCA.configMap`, `databaseCA.key` | A ConfigMap of yours holding the certificate authorities for the database, and the file in it. The chart mounts it and sets `WEIR_DATABASE_SSLROOTCERT`. Only for a database given in parts: Weir refuses it beside `WEIR_DATABASE_URL`, which must carry `sslrootcert=` itself | none, `ca.pem` |
 | `replicaCount` | Copies of the server. More than one is safe | 1 |
@@ -84,6 +87,48 @@ serviceAccount:
 - The chart refuses `env.WEIR_DATABASE_IAM` with `migrate.when: before`. That Job runs before the chart's ServiceAccount exists, so it could not sign in.
 
 This has been rendered and not installed: it has not met a real RDS database.
+
+## Secret files from a volume
+
+The server can read its secrets from files, mounted from any volume you describe: the admin key, and the files that connections name as `file:` references. A cluster with the [Secrets Store CSI driver](https://secrets-store-csi-driver.sigs.k8s.io/) can then read them from AWS Secrets Manager, Azure Key Vault, Google Secret Manager or Vault each time a pod starts, with no long-lived Secret to copy them into.
+
+```yaml
+# values.yaml
+secretFiles:
+  volume:
+    csi:
+      driver: secrets-store.csi.k8s.io
+      readOnly: true
+      volumeAttributes:
+        secretProviderClass: weir   # yours: it says which secrets become which files
+  adminKey: admin-key
+```
+
+The volume is mounted read-only at `/etc/weir/secrets` in the server and in the migration. The chart sets:
+
+- `WEIR_SECRETS_DIR` to `/etc/weir/secrets`, so a `file:github-token` reference in the workspace `acme` reads `/etc/weir/secrets/acme/github-token`;
+- `WEIR_ADMIN_KEY_FILE` to `/etc/weir/secrets/admin-key`.
+
+A Secret, or a projected volume, works the same way:
+
+```yaml
+secretFiles:
+  volume:
+    secret:
+      secretName: weir-files
+      items:
+        - { key: admin-key, path: admin-key }
+        - { key: acme-github-token, path: acme/github-token }
+  adminKey: admin-key
+```
+
+- **The admin key is a file at the top of the volume.** No `file:` reference can name a file there, because neither a workspace nor a name may hold a slash or a dot. The chart refuses an `adminKey` with a slash in it: a file in `acme/` could be read by the workspace `acme`.
+- **Leave `WEIR_ADMIN_KEY` out of `existingSecret` when `secretFiles.adminKey` is set.** The server refuses to start with both.
+- **`existingSecret` is optional** when the admin key is a file and the database needs no password from it, as with IAM sign-in (below). The database's address and password are not read from files, so a database signed in to with a password still needs `existingSecret` for `WEIR_DATABASE_URL` or `WEIR_DATABASE_PASSWORD`.
+- **A CSI driver that signs in as the pod's service account** needs `migrate.when: start`. The Job that migrates before an install runs before the chart's ServiceAccount exists, so its volume cannot be mounted.
+- The chart refuses to render with `secretFiles.adminKey` and no `secretFiles.volume`, and with neither `existingSecret` nor `secretFiles.adminKey`. A server whose `env.WEIR_REQUIRE_ADMIN_KEY` is set to an empty string does not require an admin key, and may have neither.
+
+`WEIR_ADMIN_KEY_FILE` needs a server from issue #138 or later; an older one ignores it and will not start with no admin key. This has been rendered and not installed: it has not met a CSI driver.
 
 ## What it does not do
 

@@ -11,7 +11,9 @@ imagePullSecrets: []
 replicaCount: 1
 
 # existingSecret names a Kubernetes Secret you make yourself. Every key in it
-# becomes an environment variable of the server. It must hold:
+# becomes an environment variable of the server. It may be left empty when
+# secretFiles.adminKey gives the admin key and the database needs no password
+# (see secretFiles below). Otherwise it must hold:
 #
 #   WEIR_ADMIN_KEY       the key that may do anything; the server will not start without it
 #   WEIR_DATABASE_URL    the Postgres database (or WEIR_DATABASE_HOST and its parts)
@@ -36,6 +38,26 @@ env: {}
 databaseCA:
   configMap: ""
   key: ca.pem
+
+# Secret files, read by the server from a volume you describe, in place of
+# (or as well as) existingSecret. The volume is copied as written into the
+# pod: a Secret, a CSI volume (the Secrets Store CSI driver, with AWS, Azure,
+# Google Cloud or Vault), or a projected volume. It is mounted read-only at
+# mountPath in the server and the migration, and WEIR_SECRETS_DIR is set to
+# it, so file: references read <mountPath>/<workspace>/<name>.
+secretFiles:
+  volume: {}
+  #  csi:
+  #    driver: secrets-store.csi.k8s.io
+  #    readOnly: true
+  #    volumeAttributes:
+  #      secretProviderClass: weir
+  mountPath: /etc/weir/secrets
+  # The file at the top of the volume that holds the admin key. It sets
+  # WEIR_ADMIN_KEY_FILE. A plain file name: one in a directory could be read
+  # by the workspace of that name. Leave existingSecret without WEIR_ADMIN_KEY
+  # when this is set: the server refuses both.
+  adminKey: ""
 
 # Bringing the database up to date with "weir migrate".
 migrate:
