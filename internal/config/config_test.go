@@ -135,6 +135,26 @@ func TestTheCertificateAuthoritiesForTheDatabaseCanBeNamed(t *testing.T) {
 	}
 }
 
+func TestTheCertificateAuthoritiesAreRefusedBesideOneAddress(t *testing.T) {
+	_, err := FromEnv(env(map[string]string{
+		"WEIR_DATABASE_URL": "postgres://db.example.com/weir?sslmode=verify-full", "WEIR_DATABASE_SSLROOTCERT": "/etc/weir/db-ca/ca.pem",
+	}))
+	if err == nil {
+		t.Fatal("FromEnv accepted WEIR_DATABASE_SSLROOTCERT with WEIR_DATABASE_URL, which ignores it")
+	}
+	for _, want := range []string{"WEIR_DATABASE_SSLROOTCERT", "sslrootcert=", "in parts"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %v; want it to say %q", err, want)
+		}
+	}
+	// One address that carries its own file is accepted as it is.
+	url := "postgres://db.example.com/weir?sslmode=verify-full&sslrootcert=/etc/weir/db-ca/ca.pem"
+	cfg, err := FromEnv(env(map[string]string{"WEIR_DATABASE_URL": url}))
+	if err != nil || cfg.DatabaseURL != url {
+		t.Errorf("cfg = %+v, %v; want the address unchanged", cfg, err)
+	}
+}
+
 // iam is the least that IAM sign-in needs, for the tests to add to or take from.
 func iam(change map[string]string) map[string]string {
 	settings := map[string]string{
@@ -184,6 +204,8 @@ func TestIAMSignInRefusesASettingThatContradictsIt(t *testing.T) {
 		"a password as well":        {map[string]string{"WEIR_DATABASE_PASSWORD": "pw"}, "WEIR_DATABASE_PASSWORD"},
 		"no host":                   {map[string]string{"WEIR_DATABASE_HOST": ""}, "WEIR_DATABASE_HOST"},
 		"a socket":                  {map[string]string{"WEIR_DATABASE_HOST": "/cloudsql/p:r:i"}, "socket"},
+		"a list of hosts":           {map[string]string{"WEIR_DATABASE_HOST": "db-a.example.com,db-b.example.com"}, "WEIR_DATABASE_HOST is a list"},
+		"a list of ports":           {map[string]string{"WEIR_DATABASE_PORT": "5432,5433"}, "WEIR_DATABASE_PORT is a list"},
 		"no user":                   {map[string]string{"WEIR_DATABASE_USER": ""}, "WEIR_DATABASE_USER"},
 		"no region":                 {map[string]string{"AWS_REGION": ""}, "AWS_REGION"},
 		"a certificate not named":   {map[string]string{"WEIR_DATABASE_SSLMODE": "verify-ca"}, "verify-full"},

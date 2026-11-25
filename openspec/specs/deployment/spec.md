@@ -134,11 +134,15 @@ With `WEIR_WORKER=off` a server SHALL answer the API, serve streams and the cons
 - **THEN** a run started through the first is worked by the second
 
 ### Requirement: The certificate authorities for the database can be named
-When the database is given in parts, `WEIR_DATABASE_SSLROOTCERT` SHALL name a file of certificate authorities, and Weir SHALL check the database's certificate against that file.
+When the database is given in parts, `WEIR_DATABASE_SSLROOTCERT` SHALL name a file of certificate authorities, and Weir SHALL check the database's certificate against that file. With `WEIR_DATABASE_URL`, where it would be ignored, Weir MUST refuse to start when `WEIR_DATABASE_SSLROOTCERT` is set, and the error SHALL say to put `sslrootcert=` in the address or give the database in parts.
 
 #### Scenario: A file of certificate authorities is named
 - **WHEN** `WEIR_DATABASE_HOST` and `WEIR_DATABASE_SSLROOTCERT=/etc/weir/db-ca/ca.pem` are set
 - **THEN** the address Weir connects with names that file as its root certificates
+
+#### Scenario: A file of certificate authorities beside one address
+- **WHEN** Weir is started with `WEIR_DATABASE_URL` and `WEIR_DATABASE_SSLROOTCERT` set
+- **THEN** it fails, and the error names `WEIR_DATABASE_SSLROOTCERT` and says to put `sslrootcert=` in `WEIR_DATABASE_URL` or give the database in parts
 
 ### Requirement: The database can be signed in to with an AWS IAM token
 With `WEIR_DATABASE_IAM=aws`, Weir SHALL sign in to Postgres with no stored password. Each time it opens a connection it SHALL make a new Amazon RDS IAM token for the host, port and user of that connection and the region in `AWS_REGION`, signed with the AWS credentials of the place it runs, and use it as the password. `weir migrate` and every other command SHALL connect this way. A token MUST NOT appear in a log or an error.
@@ -165,11 +169,15 @@ With `WEIR_DATABASE_IAM=aws`, Weir SHALL sign in to Postgres with no stored pass
 - **THEN** it names that host, port and user, is signed for `eu-west-2` and the service `rds-db`, and expires in 15 minutes
 
 ### Requirement: IAM sign-in is refused when a setting contradicts it
-With `WEIR_DATABASE_IAM=aws`, Weir MUST refuse to start when a setting contradicts it: `WEIR_DATABASE_URL` or `WEIR_DATABASE_PASSWORD` is set, the host or user is missing, the host is a socket, no region is set, or `WEIR_DATABASE_SSLMODE` is not `verify-full`. With no mode set, the connection SHALL use `verify-full`. A value of `WEIR_DATABASE_IAM` other than `aws` MUST be refused. Each error SHALL name the setting to change.
+With `WEIR_DATABASE_IAM=aws`, Weir MUST refuse to start on any of these: `WEIR_DATABASE_URL` or `WEIR_DATABASE_PASSWORD` is set, the host or user is missing, the host is a socket, the host or port is a list, no region is set, or `WEIR_DATABASE_SSLMODE` is not `verify-full`. With no mode set, the connection SHALL use `verify-full`. A value of `WEIR_DATABASE_IAM` other than `aws` MUST be refused. Each error SHALL name the setting to change.
 
 #### Scenario: A password is set as well
 - **WHEN** Weir is started with `WEIR_DATABASE_IAM=aws` and `WEIR_DATABASE_PASSWORD` set
 - **THEN** it fails, and the error names `WEIR_DATABASE_PASSWORD`
+
+#### Scenario: A list of hosts
+- **WHEN** Weir is started with `WEIR_DATABASE_IAM=aws` and `WEIR_DATABASE_HOST=db-a.example.com,db-b.example.com`
+- **THEN** it fails, and the error names `WEIR_DATABASE_HOST` and says a token is signed for one host
 
 #### Scenario: The certificate would not be checked
 - **WHEN** Weir is started with `WEIR_DATABASE_IAM=aws` and `WEIR_DATABASE_SSLMODE=require`
