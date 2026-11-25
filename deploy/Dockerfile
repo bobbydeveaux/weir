@@ -5,7 +5,8 @@
 #   docker build -f deploy/Dockerfile -t weir .
 #
 # It needs a Postgres database (WEIR_DATABASE_URL, or WEIR_DATABASE_HOST and
-# its parts) and an admin key (WEIR_ADMIN_KEY). It refuses to start without
+# its parts) and an admin key (WEIR_ADMIN_KEY, or a file named in
+# WEIR_ADMIN_KEY_FILE). It refuses to start without
 # the key, so that a server on a network is never open by accident.
 #
 # It holds git, which checking out and committing to a repository need. It

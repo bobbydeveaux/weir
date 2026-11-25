@@ -41,7 +41,7 @@ Use your cluster's own way of making those Secrets if it has one: External Secre
 | `secretFiles.mountPath` | Where the volume is mounted | `/etc/weir/secrets` |
 | `secretFiles.adminKey` | The file at the top of the volume that holds the admin key. Sets `WEIR_ADMIN_KEY_FILE` | none |
 | `env` | Any other setting, by name | none |
-| `databaseCA.configMap`, `databaseCA.key` | A ConfigMap of yours holding the certificate authorities for the database, and the file in it. The chart mounts it and sets `WEIR_DATABASE_SSLROOTCERT` | none, `ca.pem` |
+| `databaseCA.configMap`, `databaseCA.key` | A ConfigMap of yours holding the certificate authorities for the database, and the file in it. The chart mounts it and sets `WEIR_DATABASE_SSLROOTCERT`. Only for a database given in parts: Weir refuses it beside `WEIR_DATABASE_URL`, which must carry `sslrootcert=` itself | none, `ca.pem` |
 | `replicaCount` | Copies of the server. More than one is safe | 1 |
 | `migrate.enabled` | Bring the database up to date with `weir migrate` | true |
 | `migrate.when` | `before`: in a Job before each install and upgrade. `start`: in the server's pod before it serves, for a cluster that fills Secrets in after install (External Secrets Operator) | `before` |
