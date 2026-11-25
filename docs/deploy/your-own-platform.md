@@ -15,7 +15,7 @@ Tags: `edge` is the latest commit on `main`; a version such as `0.1.0` is a rele
 |---|---|
 | A Postgres database | `WEIR_DATABASE_URL`, or `WEIR_DATABASE_HOST` with `_PORT`, `_NAME`, `_USER`, `_PASSWORD` and `_SSLMODE` for a platform that hands out the parts. The host may be a socket directory, as Cloud SQL's is. For Amazon RDS with no password, `WEIR_DATABASE_IAM=aws`: see [the README](../../README.md#a-database-with-no-password-amazon-rds-and-iam) |
 | Its schema | Run `weir migrate` once per deploy, before the new version takes traffic |
-| An admin key | `WEIR_ADMIN_KEY`, from your platform's secret store. The image refuses to start without it |
+| An admin key | `WEIR_ADMIN_KEY`, from your platform's secret store, or `WEIR_ADMIN_KEY_FILE` naming a file that holds it, where the platform hands out secrets as files. The image refuses to start without one |
 | A port | It listens on `PORT` if your platform sets that, otherwise 8080 |
 | Secrets for connections | `WEIR_SECRET__<WORKSPACE>__<NAME>` variables, or files under `WEIR_SECRETS_DIR` |
 | To stay running | A worker polls for work, so one instance must stay up. A platform that stops idle services needs to be told to keep one |

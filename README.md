@@ -103,7 +103,8 @@ To make one real call through the Claude command line: `WEIR_TEST_CLAUDE=1 go te
 | `WEIR_DATABASE_HOST`, `_PORT`, `_NAME`, `_USER`, `_PASSWORD`, `_SSLMODE`, `_SSLROOTCERT` | The database in parts, for a platform that hands them out one at a time. Used when `WEIR_DATABASE_URL` is not set. `_SSLROOTCERT` names a file of certificate authorities to check the database's certificate against | none |
 | `WEIR_DATABASE_IAM` | `aws`: sign in to Amazon RDS with an IAM token made for each connection, and no password. Needs the database in parts and `AWS_REGION`. See "A database with no password" below | not set |
 | `PORT` | The port to listen on, where a platform sets it and `WEIR_HTTP_ADDR` is not set | none |
-| `WEIR_REQUIRE_ADMIN_KEY` | Refuse to start without `WEIR_ADMIN_KEY`. The container image sets it | not set |
+| `WEIR_ADMIN_KEY_FILE` | A file holding the admin key, in place of `WEIR_ADMIN_KEY`, for a platform that hands out secrets as files. Read once at start, with surrounding whitespace trimmed. See "The admin key from a file" below | not set |
+| `WEIR_REQUIRE_ADMIN_KEY` | Refuse to start without `WEIR_ADMIN_KEY` or `WEIR_ADMIN_KEY_FILE`. The container image sets it | not set |
 | `WEIR_AGENT_RUNNER` | Where agents run: `inline` (beside the worker), `docker` (a container each), `kubernetes` (a Job each) or `cloudrun` (a run of a Cloud Run job each). See "Where agents run" below | `inline` |
 | `WEIR_AGENT_IMAGE` | The image agents run in, for `docker`. Build it from `deploy/agent.Dockerfile` | none |
 | `WEIR_AGENT_URL` | Weir's address as an agent's container reaches it | `http://host.docker.internal` and the API's port |
@@ -153,7 +154,7 @@ docker compose --profile weir up        # Postgres and Weir, built from this che
 curl localhost:8080/v1/workspaces -H 'Authorization: Bearer local-admin-key'
 ```
 
-Two images are published: `ghcr.io/bobbydeveaux/weir` (the server) and `ghcr.io/bobbydeveaux/weir-agent` (what an agent runs in). `edge` is the latest commit on `main`. If a pull is refused, build the image yourself from `deploy/`: it needs nothing but this repository. The server image refuses to start without `WEIR_ADMIN_KEY`, so that a server on a network is never open by accident.
+Two images are published: `ghcr.io/bobbydeveaux/weir` (the server) and `ghcr.io/bobbydeveaux/weir-agent` (what an agent runs in). `edge` is the latest commit on `main`. If a pull is refused, build the image yourself from `deploy/`: it needs nothing but this repository. The server image refuses to start without an admin key (`WEIR_ADMIN_KEY` or `WEIR_ADMIN_KEY_FILE`), so that a server on a network is never open by accident.
 
 The server image holds the console too, and serves it at every address that is not the API's: open `http://localhost:8080`. Outside the image, build the console (`cd console && npm run build`) and point `WEIR_CONSOLE_DIR` at `console/build`.
 
@@ -176,6 +177,18 @@ curl $WEIR/v1/runs -H "Authorization: Bearer weir_3f9c…"
 - Roles: a `reader` reads; a `writer` also publishes, starts, decides, resumes and cancels; an `admin` also manages the workspace's keys. Only the admin key creates workspaces.
 - A key acts as itself: its name is the actor on everything it does. A key made with `--act-as` may name the person it is acting for in `X-Weir-Actor`, which is for an application with its own sign-in.
 - Callbacks and an agent's tool calls carry a one-time token for a single attempt and need no key.
+
+#### The admin key from a file
+
+The admin key can come from a file instead: set `WEIR_ADMIN_KEY_FILE` to its path, for a platform that hands out secrets as files (the Kubernetes Secrets Store CSI driver, or an init container that fetches the secret). It keeps the key out of the server's environment, where `/proc/<pid>/environ` and anything that dumps the environment would show it.
+
+```bash
+export WEIR_ADMIN_KEY_FILE=/var/run/secrets/weir/admin-key
+```
+
+- The file is read once, when `weir serve` starts. A new key needs a restart.
+- The key is the file's contents with surrounding whitespace trimmed, so a trailing newline does no harm.
+- The server refuses to start when both `WEIR_ADMIN_KEY` and `WEIR_ADMIN_KEY_FILE` are set, when the file cannot be read, or when it is empty. The error names the setting and never repeats the key.
 
 #### Behind a sign-in proxy
 
