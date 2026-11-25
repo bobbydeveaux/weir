@@ -59,7 +59,9 @@ const (
 //	                   from AWS_REGION
 //	WEIR_DATABASE_SSLROOTCERT
 //	                   optional, with the database in parts: a file of
-//	                   certificate authorities to check its certificate against
+//	                   certificate authorities to check its certificate
+//	                   against. Refused with WEIR_DATABASE_URL, which must
+//	                   carry sslrootcert= itself
 //	WEIR_HTTP_ADDR     optional, default ":8080", or the port in PORT if a
 //	                   platform sets that
 //	WEIR_RUNNER        optional, one of cli, api or fake; default "cli"
@@ -78,6 +80,10 @@ func FromEnv(getenv func(string) string) (Config, error) {
 	case "":
 		if cfg.DatabaseURL == "" {
 			cfg.DatabaseURL = databaseFromParts(getenv)
+		} else if strings.TrimSpace(getenv("WEIR_DATABASE_SSLROOTCERT")) != "" {
+			// The file is added only to an address built from parts. Ignoring
+			// it would leave the certificate unchecked against it, silently.
+			return Config{}, fmt.Errorf("WEIR_DATABASE_SSLROOTCERT is set with WEIR_DATABASE_URL, which it cannot be added to: put sslrootcert= in WEIR_DATABASE_URL and unset WEIR_DATABASE_SSLROOTCERT, or give the database in parts")
 		}
 	case "aws":
 		var err error
@@ -173,6 +179,12 @@ func databaseWithIAM(getenv func(string) string, url string) (address, region st
 		return "", "", fmt.Errorf("%s, and WEIR_DATABASE_HOST is not set: a token is made for one host", with)
 	case strings.HasPrefix(host, "/"):
 		return "", "", fmt.Errorf("%s, and WEIR_DATABASE_HOST is a socket (%s): a token is made for a host name and a port", with, host)
+	// The driver reads a comma as a list to try in turn, but the token is
+	// signed for the first host and port only, so every other would refuse it.
+	case strings.Contains(host, ","):
+		return "", "", fmt.Errorf("%s, and WEIR_DATABASE_HOST is a list (%s): a token is signed for one host, so name one", with, host)
+	case strings.Contains(getenv("WEIR_DATABASE_PORT"), ","):
+		return "", "", fmt.Errorf("%s, and WEIR_DATABASE_PORT is a list (%s): a token is signed for one port, so name one", with, strings.TrimSpace(getenv("WEIR_DATABASE_PORT")))
 	case set("WEIR_DATABASE_USER") == "":
 		return "", "", fmt.Errorf("%s, and WEIR_DATABASE_USER is not set: a token is made for one database user", with)
 	}

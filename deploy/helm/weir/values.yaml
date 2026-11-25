@@ -30,7 +30,9 @@ env: {}
 # The certificate authorities to check the database's certificate against, for
 # a database whose certificate a machine does not trust by default, such as
 # Amazon RDS. configMap names a ConfigMap you make yourself; key is the file in
-# it. The chart mounts it and sets WEIR_DATABASE_SSLROOTCERT.
+# it. The chart mounts it and sets WEIR_DATABASE_SSLROOTCERT. It works only
+# with the database in parts: Weir refuses it beside WEIR_DATABASE_URL, which
+# must carry sslrootcert= itself.
 databaseCA:
   configMap: ""
   key: ca.pem
