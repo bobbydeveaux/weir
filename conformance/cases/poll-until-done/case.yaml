@@ -1,0 +1,10 @@
+description: A step that polls a third party asks again until its condition holds. However many times it asks, that is one attempt.
+connections:
+  scanner:
+    - { status: pending }
+    - { status: pending }
+    - { status: done }
+steps:
+  - start: { requester: alice }
+expect:
+  status: succeeded

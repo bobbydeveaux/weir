@@ -1,0 +1,15 @@
+description: The person who started a run is refused when she decides its task. Someone else rejects it, and the run goes where a rejection leads.
+templates: [route, fix]
+connections:
+  detector: []
+model:
+  decisions:
+    route: { label: fix, confidence: 0.95 }
+  outputs:
+    fix: [{ branch: fix/482 }]
+steps:
+  - start: { requester: alice, input: { title: Checkout is down } }
+  - decide: { as: alice, outcome: approved, refused: true }
+  - decide: { as: bob, outcome: rejected }
+expect:
+  status: waiting

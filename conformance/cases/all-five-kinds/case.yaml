@@ -1,0 +1,16 @@
+description: One run through a decide, a deterministic, an ai, a human and an external step, in that order.
+templates: [route, fix]
+connections:
+  detector: []
+model:
+  cost_usd: 3.20
+  decisions:
+    route: { label: fix, confidence: 0.95 }
+  outputs:
+    fix: [{ branch: fix/482 }]
+steps:
+  - start: { requester: alice, input: { title: Checkout is down } }
+  - decide: { as: bob, outcome: approved }
+  - callback: { connection: detector, output: { cleared: true } }
+expect:
+  status: succeeded

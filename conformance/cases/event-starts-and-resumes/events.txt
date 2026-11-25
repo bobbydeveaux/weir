@@ -1,0 +1,9 @@
+run.started
+step.ready paid
+attempt.started paid
+step.waiting paid
+step.succeeded paid
+step.ready ship
+attempt.started ship
+step.succeeded ship
+run.succeeded

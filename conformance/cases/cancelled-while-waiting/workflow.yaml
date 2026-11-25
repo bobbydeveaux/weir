@@ -1,0 +1,14 @@
+weir: "0.1"
+namespace: conformance
+name: cancelled-while-waiting
+steps:
+  - id: note
+    kind: deterministic
+    handler: core.echo
+    input: { noted: input.what }
+  - id: approve
+    kind: human
+    assign: { role: approver }
+  - id: never
+    kind: deterministic
+    handler: core.noop

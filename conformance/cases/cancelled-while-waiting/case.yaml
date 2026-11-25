@@ -1,0 +1,7 @@
+description: A run cancelled while it waits for a person stops there. The step after it never starts.
+steps:
+  - start: { requester: alice, input: { what: a request } }
+  - cancel: { as: bob, reason: no longer needed }
+expect:
+  status: cancelled
+  error: cancelled

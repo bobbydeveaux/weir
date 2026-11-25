@@ -1,0 +1,48 @@
+weir: "0.1"
+namespace: conformance
+name: unsure-decision-takes-the-default
+budget: { usd: 50 }
+steps:
+  - id: route
+    kind: decide
+    template: route@1
+    labels: [fix, needs_human]
+    confidence: 0.8
+    default: needs_human
+    next:
+      - when: label == "needs_human"
+        go: page
+  - id: open_issue
+    kind: deterministic
+    handler: core.echo
+    input: { title: input.title }
+  - id: fix
+    kind: ai
+    prompt: fix@1
+    input: { title: steps.open_issue.output.title }
+    output:
+      schema:
+        type: object
+        required: [branch]
+        properties:
+          branch: { type: string }
+    budget: { usd: 15 }
+  - id: approve
+    kind: human
+    assign: { role: approver, not: run.requester }
+    timeout: 1h
+    next:
+      - when: outcome == "rejected"
+        go: page
+  - id: verify
+    kind: external
+    connection: detector
+    call:
+      path: /verify
+      body: { branch: steps.fix.output.branch }
+    resume: callback
+    timeout: 1h
+    end: true
+  - id: page
+    kind: human
+    assign: { role: on_call }

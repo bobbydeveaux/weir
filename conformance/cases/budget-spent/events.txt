@@ -1,0 +1,9 @@
+run.started
+step.ready first
+attempt.started first
+step.succeeded first
+step.ready second
+attempt.started second
+attempt.failed second
+step.failed second
+run.blocked

@@ -1,0 +1,17 @@
+run.started
+step.ready route
+attempt.started route
+step.succeeded route
+step.ready open_issue
+attempt.started open_issue
+step.succeeded open_issue
+step.ready fix
+attempt.started fix
+step.succeeded fix
+step.waiting approve
+step.succeeded approve
+step.ready verify
+attempt.started verify
+step.waiting verify
+step.succeeded verify
+run.succeeded
