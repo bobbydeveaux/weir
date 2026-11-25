@@ -1,3 +1,4 @@
+{{- include "weir.check" . -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -29,6 +30,7 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args: ["migrate"]
           {{- include "weir.env" . | nindent 10 }}
+          {{- include "weir.caMount" . | nindent 10 }}
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: { drop: ["ALL"] }
@@ -69,12 +71,14 @@ spec:
           livenessProbe:
             httpGet: { path: /healthz, port: http }
             periodSeconds: 20
+          {{- include "weir.caMount" . | nindent 10 }}
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: { drop: ["ALL"] }
           {{- with .Values.resources }}
           resources: {{- toYaml . | nindent 12 }}
           {{- end }}
+      {{- include "weir.caVolume" . | nindent 6 }}
       {{- with .Values.nodeSelector }}
       nodeSelector: {{- toYaml . | nindent 8 }}
       {{- end }}

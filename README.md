@@ -88,7 +88,7 @@ To make one real call through the Claude command line: `WEIR_TEST_CLAUDE=1 go te
 
 | Variable | Meaning | Default |
 | --- | --- | --- |
-| `WEIR_DATABASE_URL` | Postgres connection string | required |
+| `WEIR_DATABASE_URL` | Postgres connection string | required, unless the database is given in parts |
 | `WEIR_HTTP_ADDR` | Address the API listens on | `:8080` |
 | `WEIR_PUBLIC_URL` | Address third parties use to reach the API | `http://localhost` plus the port |
 | `WEIR_RUNNER` | How `ai` and `decide` steps run: `cli` or `fake`. `api` is accepted as a name and refused when the server starts: it is not built | `cli` |
@@ -100,7 +100,8 @@ To make one real call through the Claude command line: `WEIR_TEST_CLAUDE=1 go te
 | `WEIR_CLAUDE_MODEL_PREFIX` | Put in front of a model name that begins `claude-`, such as `eu.anthropic.` for Bedrock | none |
 | `WEIR_TYPESAFE_URL`, `WEIR_GEMINI_API_URL` | A different address for Jev or Gemini Decisions, to go through a gateway or proxy | each service's own |
 | `WEIR_BLOB_URL` | Where files are kept: `s3://bucket?region=…`, `gs://bucket`, `azblob://container` or `file:///directory`. See "Where files are kept" below | in Postgres |
-| `WEIR_DATABASE_HOST`, `_PORT`, `_NAME`, `_USER`, `_PASSWORD`, `_SSLMODE` | The database in parts, for a platform that hands them out one at a time. Used when `WEIR_DATABASE_URL` is not set | none |
+| `WEIR_DATABASE_HOST`, `_PORT`, `_NAME`, `_USER`, `_PASSWORD`, `_SSLMODE`, `_SSLROOTCERT` | The database in parts, for a platform that hands them out one at a time. Used when `WEIR_DATABASE_URL` is not set. `_SSLROOTCERT` names a file of certificate authorities to check the database's certificate against | none |
+| `WEIR_DATABASE_IAM` | `aws`: sign in to Amazon RDS with an IAM token made for each connection, and no password. Needs the database in parts and `AWS_REGION`. See "A database with no password" below | not set |
 | `PORT` | The port to listen on, where a platform sets it and `WEIR_HTTP_ADDR` is not set | none |
 | `WEIR_REQUIRE_ADMIN_KEY` | Refuse to start without `WEIR_ADMIN_KEY`. The container image sets it | not set |
 | `WEIR_AGENT_RUNNER` | Where agents run: `inline` (beside the worker), `docker` (a container each), `kubernetes` (a Job each) or `cloudrun` (a run of a Cloud Run job each). See "Where agents run" below | `inline` |
@@ -114,6 +115,26 @@ To make one real call through the Claude command line: `WEIR_TEST_CLAUDE=1 go te
 | `WEIR_CODEX_USD_PER_MTOK_IN`, `WEIR_CODEX_USD_PER_MTOK_OUT` | The price of a million tokens in and out on Codex, in US dollars, such as `1.25` and `10`. Codex reports tokens and no cost, so Weir works the cost out from these. A value that is not a number, or is less than zero, stops the server from starting. See "What a Codex step costs" below | none: Codex refuses a step that has a budget |
 
 The `cli` runner keeps the command line's permission checks on, offers it no built-in tools, ignores user and project settings, and passes it a short list of environment variables rather than the worker's own.
+
+### A database with no password: Amazon RDS and IAM
+
+Some platforms give an application a Postgres role on Amazon RDS that can sign in only with AWS IAM. No password exists, so there is nothing to store or rotate. Set `WEIR_DATABASE_IAM=aws` and Weir signs in that way:
+
+```sh
+export WEIR_DATABASE_IAM=aws
+export WEIR_DATABASE_HOST=mydb.abc123.eu-west-2.rds.amazonaws.com
+export WEIR_DATABASE_PORT=5432 WEIR_DATABASE_NAME=weir WEIR_DATABASE_USER=weir
+export WEIR_DATABASE_SSLROOTCERT=/etc/weir/db-ca/ca.pem   # Amazon's certificate authorities for RDS
+export AWS_REGION=eu-west-2                               # EKS sets this for you
+```
+
+- **A new token for every connection.** Each time Weir opens a connection it makes an RDS IAM token and uses it as the password. A token lasts 15 minutes and is needed only to open a connection, so connections already open go on working. `weir migrate` and every other command sign in the same way.
+- **Where the AWS credentials come from.** AWS's default chain: EKS Pod Identity, an IAM role for a service account, an instance's role, or the environment. The role needs `rds-db:connect` on the database user. The token is signed for the region in `AWS_REGION` (or `AWS_DEFAULT_REGION`).
+- **The certificate is always checked.** The token is sent as the password, so the connection is made with `sslmode=verify-full` and Weir refuses any other mode. RDS's certificates are signed by Amazon's own authorities, which a machine does not trust by default: download [Amazon's bundle](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.SSL.html) and name the file in `WEIR_DATABASE_SSLROOTCERT`.
+- **What is refused.** `WEIR_DATABASE_URL`, `WEIR_DATABASE_PASSWORD`, a missing host, user or region, and a host that is a socket. Weir stops when it starts and names the setting to change.
+- **In the database.** The role must be allowed to sign in with IAM: `GRANT rds_iam TO weir;`, with IAM authentication turned on for the instance.
+
+**Not proven:** a sign-in to a real RDS database. The tests check that a token is well formed, and that Postgres is given a password made for each connection. RDS Proxy is expected to work and has not been tried. Only AWS is built: Cloud SQL and Azure have no equivalent setting yet.
 
 ### What a Codex step costs
 

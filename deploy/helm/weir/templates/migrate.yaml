@@ -28,7 +28,9 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args: ["migrate"]
           {{- include "weir.env" . | nindent 10 }}
+          {{- include "weir.caMount" . | nindent 10 }}
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: { drop: ["ALL"] }
+      {{- include "weir.caVolume" . | nindent 6 }}
 {{- end }}

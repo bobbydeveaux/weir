@@ -36,8 +36,9 @@ Use your cluster's own way of making those Secrets if it has one: External Secre
 | Value | Meaning | Default |
 |---|---|---|
 | `image.repository`, `image.tag` | The server's image. The tag defaults to the chart's `appVersion` | `ghcr.io/bobbydeveaux/weir` |
-| `existingSecret` | A Secret whose keys become the server's environment. It must hold `WEIR_ADMIN_KEY` and the database | none |
+| `existingSecret` | A Secret whose keys become the server's environment. It must hold `WEIR_ADMIN_KEY`, and the database unless that is signed in to with IAM | none |
 | `env` | Any other setting, by name | none |
+| `databaseCA.configMap`, `databaseCA.key` | A ConfigMap of yours holding the certificate authorities for the database, and the file in it. The chart mounts it and sets `WEIR_DATABASE_SSLROOTCERT` | none, `ca.pem` |
 | `replicaCount` | Copies of the server. More than one is safe | 1 |
 | `migrate.enabled` | Bring the database up to date with `weir migrate` | true |
 | `migrate.when` | `before`: in a Job before each install and upgrade. `start`: in the server's pod before it serves, for a cluster that fills Secrets in after install (External Secrets Operator) | `before` |
@@ -50,6 +51,39 @@ Use your cluster's own way of making those Secrets if it has one: External Secre
 | `serviceAccount.annotations` | For the server's own workload identity | none |
 | `ingress.enabled`, `.host`, `.className`, `.annotations`, `.tlsSecret` | Reaching Weir from outside the cluster | off |
 | `resources`, `nodeSelector`, `tolerations`, `podAnnotations` | The usual | none |
+
+## Amazon RDS with IAM
+
+A database that is signed in to with AWS IAM has no password, so the Secret holds only the admin key and the database's settings go in `env`.
+
+```bash
+# Amazon's certificate authorities for RDS, as a ConfigMap. They are public.
+curl -sSfo global-bundle.pem https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
+kubectl -n weir create configmap weir-db-ca --from-file=ca.pem=global-bundle.pem
+```
+
+```yaml
+# values.yaml
+existingSecret: weir          # holds WEIR_ADMIN_KEY only
+env:
+  WEIR_DATABASE_IAM: aws
+  WEIR_DATABASE_HOST: mydb.abc123.eu-west-2.rds.amazonaws.com
+  WEIR_DATABASE_NAME: weir
+  WEIR_DATABASE_USER: weir
+databaseCA:
+  configMap: weir-db-ca
+migrate:
+  when: start                 # the Job that runs before an install has no AWS identity
+serviceAccount:
+  annotations:                # for an IAM role for a service account; EKS Pod Identity needs none
+    eks.amazonaws.com/role-arn: arn:aws:iam::111122223333:role/weir
+```
+
+- The server's IAM role needs `rds-db:connect` on the database user, and the user needs `GRANT rds_iam`.
+- EKS sets `AWS_REGION` in the pod. Elsewhere, add it to `env`.
+- The chart refuses `env.WEIR_DATABASE_IAM` with `migrate.when: before`. That Job runs before the chart's ServiceAccount exists, so it could not sign in.
+
+This has been rendered and not installed: it has not met a real RDS database.
 
 ## What it does not do
 

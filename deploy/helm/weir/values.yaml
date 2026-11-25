@@ -16,6 +16,9 @@ replicaCount: 1
 #   WEIR_ADMIN_KEY       the key that may do anything; the server will not start without it
 #   WEIR_DATABASE_URL    the Postgres database (or WEIR_DATABASE_HOST and its parts)
 #
+# A database that is signed in to with AWS IAM has no password, so it needs
+# nothing here: its settings go in env. See "Amazon RDS with IAM" in the README.
+#
 # and may hold the secrets your connections name, as
 # WEIR_SECRET__<WORKSPACE>__<NAME>. The chart never holds a secret itself.
 existingSecret: ""
@@ -23,6 +26,14 @@ existingSecret: ""
 # env holds any other setting, by name. See the README for the full list.
 env: {}
 #  WEIR_PUBLIC_URL: https://weir.example.com
+
+# The certificate authorities to check the database's certificate against, for
+# a database whose certificate a machine does not trust by default, such as
+# Amazon RDS. configMap names a ConfigMap you make yourself; key is the file in
+# it. The chart mounts it and sets WEIR_DATABASE_SSLROOTCERT.
+databaseCA:
+  configMap: ""
+  key: ca.pem
 
 # Bringing the database up to date with "weir migrate".
 migrate:
