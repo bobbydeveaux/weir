@@ -22,7 +22,7 @@ Tags: `edge` is the latest commit on `main`; a version such as `0.1.0` is a rele
 
 ## On Kubernetes
 
-Use the chart, [deploy/helm/weir](../../deploy/helm/weir/README.md). Your own repository then holds a values file and whatever makes your Secrets, and names the chart.
+Use the chart, [deploy/helm/weir](../../deploy/helm/weir/README.md). Your own repository then holds a values file and whatever makes your Secrets, and names the chart. The chart can also mount secret files from a volume, such as the Secrets Store CSI driver's, so that the admin key and `file:` secrets come straight from a cloud's secret manager.
 
 ## A repository of your own
 
