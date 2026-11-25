@@ -24,7 +24,13 @@ func Migrate(ctx context.Context, databaseURL string) (int64, error) {
 		return 0, fmt.Errorf("open database: %w", err)
 	}
 	defer db.Close()
+	return MigrateDB(ctx, db)
+}
 
+// MigrateDB brings a database that is already open up to the latest schema
+// version, and returns the version it ended on. It is for a caller that signs
+// in some other way than a password in an address.
+func MigrateDB(ctx context.Context, db *sql.DB) (int64, error) {
 	if err := db.PingContext(ctx); err != nil {
 		return 0, fmt.Errorf("connect to database: %w", err)
 	}

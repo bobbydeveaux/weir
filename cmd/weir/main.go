@@ -15,14 +15,13 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"github.com/bobbydeveaux/weir/agent"
 	"github.com/bobbydeveaux/weir/api"
 	"github.com/bobbydeveaux/weir/blob"
 	"github.com/bobbydeveaux/weir/engine"
 	"github.com/bobbydeveaux/weir/engine/store"
 	"github.com/bobbydeveaux/weir/internal/config"
+	"github.com/bobbydeveaux/weir/internal/database"
 	"github.com/bobbydeveaux/weir/internal/mcpbridge"
 	"github.com/bobbydeveaux/weir/runner"
 	"github.com/bobbydeveaux/weir/spec"
@@ -68,7 +67,11 @@ Other:
 Most commands take --as <name> to say who is acting. It defaults to $USER.
 
 Environment:
-  WEIR_DATABASE_URL  Postgres connection string (required)
+  WEIR_DATABASE_URL  Postgres connection string (required, or WEIR_DATABASE_HOST and its parts)
+  WEIR_DATABASE_IAM  aws: sign in to Amazon RDS with an IAM token and no password. Needs the
+                     database in parts (WEIR_DATABASE_HOST, _PORT, _NAME, _USER) and AWS_REGION
+  WEIR_DATABASE_SSLROOTCERT
+                     A file of certificate authorities to check the database's certificate against
   WEIR_HTTP_ADDR     Address the API listens on (default :8080)
   WEIR_PUBLIC_URL    Address third parties use to reach the API (default http://localhost:8080)
   WEIR_RUNNER        How ai and decide steps run: cli, api or fake (default cli)
@@ -172,7 +175,11 @@ func (a *app) engine() (*engine.Engine, config.Config, func(), error) {
 	if err != nil {
 		return nil, cfg, nil, err
 	}
-	pool, err := pgxpool.New(a.ctx, cfg.DatabaseURL)
+	token, err := a.databaseToken(cfg)
+	if err != nil {
+		return nil, cfg, nil, err
+	}
+	pool, err := database.Pool(a.ctx, cfg.DatabaseURL, token)
 	if err != nil {
 		return nil, cfg, nil, fmt.Errorf("connect to the database: %w", err)
 	}
@@ -192,12 +199,30 @@ func (a *app) engine() (*engine.Engine, config.Config, func(), error) {
 	return eng, cfg, pool.Close, nil
 }
 
+// databaseToken returns what makes the password for each new connection, or
+// nil when the address carries its own.
+func (a *app) databaseToken(cfg config.Config) (database.Token, error) {
+	if cfg.DatabaseIAM != "aws" {
+		return nil, nil
+	}
+	return database.AWS(a.ctx, cfg.DatabaseURL, cfg.AWSRegion)
+}
+
 func (a *app) migrate([]string) error {
 	cfg, err := config.FromEnv(a.getenv)
 	if err != nil {
 		return err
 	}
-	v, err := store.Migrate(a.ctx, cfg.DatabaseURL)
+	token, err := a.databaseToken(cfg)
+	if err != nil {
+		return err
+	}
+	db, err := database.SQL(cfg.DatabaseURL, token)
+	if err != nil {
+		return fmt.Errorf("open database: %w", err)
+	}
+	defer db.Close()
+	v, err := store.MigrateDB(a.ctx, db)
 	if err != nil {
 		return err
 	}
