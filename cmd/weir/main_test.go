@@ -103,6 +103,19 @@ func TestWhetherAServerDoesTheWork(t *testing.T) {
 	}
 }
 
+func TestHowManyStepsAServerRunsAtOnce(t *testing.T) {
+	for setting, want := range map[string]int{"": 1, "1": 1, " 8 ": 8, "256": 256} {
+		if got, err := concurrency(setting); err != nil || got != want {
+			t.Errorf("concurrency(%q) = %d, %v; want %d", setting, got, err, want)
+		}
+	}
+	for _, setting := range []string{"0", "-1", "two", "1.5", "257", "1000"} {
+		if _, err := concurrency(setting); err == nil || !strings.Contains(err.Error(), "WEIR_WORKER_CONCURRENCY") {
+			t.Errorf("concurrency(%q) = %v; want it refused, naming WEIR_WORKER_CONCURRENCY", setting, err)
+		}
+	}
+}
+
 // settings answers getenv from a map, as a server's environment would.
 func settings(env map[string]string) func(string) string {
 	return func(name string) string { return env[name] }

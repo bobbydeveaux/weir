@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -80,6 +81,8 @@ Environment:
   WEIR_ADMIN_KEY_FILE
                      A file holding the admin key, in place of WEIR_ADMIN_KEY. Read once at start
   WEIR_WORKER        off: answer the API and leave the work to another server on the same database
+  WEIR_WORKER_CONCURRENCY
+                     How many steps the worker runs at once, from 1 to 256 (default 1)
   WEIR_CONSOLE_DIR   Directory of the console's files, to serve the console from this server
   WEIR_PROXY_USER_HEADER
                      Header a sign-in proxy sets to say who is asking. That person needs no key.
@@ -388,6 +391,9 @@ func (a *app) serve([]string) error {
 	if err != nil {
 		return err
 	}
+	if w.Concurrency, err = concurrency(a.getenv("WEIR_WORKER_CONCURRENCY")); err != nil {
+		return err
+	}
 	if working {
 		go func() { errs <- w.Run(a.ctx) }()
 	} else {
@@ -404,6 +410,9 @@ func (a *app) serve([]string) error {
 	fmt.Fprintln(a.out, access)
 	fmt.Fprintf(a.out, "files are kept in %s\n", eng.Files.Describe())
 	fmt.Fprintf(a.out, "agents run %s\n", agents)
+	if working {
+		fmt.Fprintf(a.out, "the worker runs up to %d steps at once\n", w.Concurrency)
+	}
 
 	select {
 	case <-a.ctx.Done():
@@ -837,6 +846,25 @@ func readAdminKey(getenv func(string) string) (string, error) {
 		return "", errors.New("neither WEIR_ADMIN_KEY nor WEIR_ADMIN_KEY_FILE is set, and this server is set to refuse to run without an admin key (WEIR_REQUIRE_ADMIN_KEY)")
 	}
 	return key, nil
+}
+
+// maxConcurrency is the most steps one worker may run at once. It is far more
+// than one process's database pool can feed, and stops a slip of the keyboard
+// from starting thousands of agents.
+const maxConcurrency = 256
+
+// concurrency reads WEIR_WORKER_CONCURRENCY: how many steps this server's
+// worker runs at once. Unset is one, as it always was.
+func concurrency(setting string) (int, error) {
+	setting = strings.TrimSpace(setting)
+	if setting == "" {
+		return 1, nil
+	}
+	n, err := strconv.Atoi(setting)
+	if err != nil || n < 1 || n > maxConcurrency {
+		return 0, fmt.Errorf("WEIR_WORKER_CONCURRENCY is %q: it must be a whole number from 1 to %d", setting, maxConcurrency)
+	}
+	return n, nil
 }
 
 // works reads WEIR_WORKER: whether this server does the work as well as

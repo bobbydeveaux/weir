@@ -260,6 +260,10 @@ type Worker struct {
 	// ToolURL is where an agent's tool calls are sent: the address of Weir's
 	// own API as the agent's machine sees it. Empty means CallbackURL.
 	ToolURL string
+	// Concurrency is how many steps Run runs at once. Zero means one. Most
+	// of an ai step's time is spent waiting on a model, so one process can
+	// hold many at once.
+	Concurrency int
 }
 
 func (w *Worker) toolURL() string {
@@ -289,9 +293,19 @@ func (w *Worker) defaults() {
 	if w.PollEvery == 0 {
 		w.PollEvery = 5 * time.Second
 	}
+	if w.Concurrency < 1 {
+		w.Concurrency = 1
+	}
 }
 
-// Run claims and runs steps until ctx is cancelled, sweeping as it goes.
+// sweepEvery is how often Run sweeps, busy or not.
+const sweepEvery = time.Second
+
+// Run claims and runs steps until ctx is cancelled, sweeping as it goes. It
+// runs up to Concurrency steps at once, each in its own goroutine with its own
+// heartbeat, and claims a step only when it has a slot free, so that it never
+// holds a step it cannot start. When a step returns an error, Run stops
+// claiming, lets the steps it holds finish, and returns the first error.
 func (w *Worker) Run(ctx context.Context) error {
 	w.defaults()
 	// Hooks are sent from their own loop, so that an application hears about
@@ -307,26 +321,79 @@ func (w *Worker) Run(ctx context.Context) error {
 			}
 		}
 	}()
+
+	slots := make(chan struct{}, w.Concurrency)
+	failed := make(chan error, 1)
+	var running sync.WaitGroup
+	var first error
 	lastSweep := time.Time{}
-	for ctx.Err() == nil {
-		if time.Since(lastSweep) > time.Second {
+	for ctx.Err() == nil && first == nil {
+		if time.Since(lastSweep) >= sweepEvery {
 			if _, err := w.Engine.Sweep(ctx); err != nil && ctx.Err() == nil {
-				return fmt.Errorf("sweep: %w", err)
+				first = fmt.Errorf("sweep: %w", err)
+				break
 			}
 			lastSweep = time.Now()
 		}
-		found, err := w.RunOnce(ctx)
-		if err != nil && ctx.Err() == nil {
-			return err
+		// Wait for a slot, but not for longer than the next sweep is due:
+		// a worker whose slots are all busy still sweeps.
+		select {
+		case slots <- struct{}{}:
+		case first = <-failed:
+			continue
+		case <-ctx.Done():
+			continue
+		case <-time.After(time.Until(lastSweep.Add(sweepEvery))):
+			continue
 		}
-		if !found {
+		select {
+		case first = <-failed: // a step failed while this one waited for its slot
+			<-slots
+			continue
+		default:
+		}
+		work, err := w.claim(ctx)
+		if err != nil {
+			<-slots
+			if ctx.Err() == nil {
+				first = err
+			}
+			continue
+		}
+		if work == nil {
+			<-slots
 			select {
+			case first = <-failed:
 			case <-ctx.Done():
 			case <-time.After(w.Idle):
 			}
+			continue
+		}
+		running.Add(1)
+		go func() {
+			defer running.Done()
+			defer func() { <-slots }()
+			if err := w.run(ctx, work); err != nil && ctx.Err() == nil {
+				select {
+				case failed <- err:
+				default: // an earlier error is already being returned
+				}
+			}
+		}()
+	}
+	// The steps already held are left to finish, not cancelled: each may have
+	// spent money on a model, and a cancelled one would only be run again.
+	running.Wait()
+	if first == nil {
+		select {
+		case first = <-failed:
+		default:
 		}
 	}
-	return nil
+	if ctx.Err() != nil {
+		return nil
+	}
+	return first
 }
 
 // DeliverHooks sends every hook that is due and returns how many arrived.
@@ -381,15 +448,24 @@ func SignHook(secret, timestamp string, body []byte) string {
 // RunOnce claims one step and runs it. It reports whether there was a step to run.
 func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 	w.defaults()
+	work, err := w.claim(ctx)
+	if err != nil || work == nil {
+		return false, err
+	}
+	return true, w.run(ctx, work)
+}
+
+// claim takes one step of the kinds a worker runs, or nil when none is ready.
+func (w *Worker) claim(ctx context.Context) (*engine.Work, error) {
 	work, err := w.Engine.Claim(ctx, kinds, w.ID, w.Lease)
 	if err != nil {
-		return false, fmt.Errorf("claim: %w", err)
+		return nil, fmt.Errorf("claim: %w", err)
 	}
-	if work == nil {
-		return false, nil
-	}
+	return work, nil
+}
 
-	// Keep the lease alive while the step runs.
+// run does one claimed step, keeping its lease alive until it ends.
+func (w *Worker) run(ctx context.Context, work *engine.Work) error {
 	beat, stop := context.WithCancel(ctx)
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -414,7 +490,7 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 			stepCtx, cancel = context.WithTimeout(ctx, d)
 		}
 	}
-	err = w.execute(stepCtx, work)
+	err := w.execute(stepCtx, work)
 	cancel()
 	stop()
 	wg.Wait()
@@ -422,9 +498,9 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 	// A stale token means the attempt was taken away, for example because the
 	// lease ran out. The engine has already dealt with it.
 	if errors.Is(err, engine.ErrStaleToken) {
-		return true, nil
+		return nil
 	}
-	return true, err
+	return err
 }
 
 func (w *Worker) execute(ctx context.Context, work *engine.Work) error {
