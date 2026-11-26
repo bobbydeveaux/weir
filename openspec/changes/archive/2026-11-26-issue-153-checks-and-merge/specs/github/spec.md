@@ -120,11 +120,11 @@ The deterministic handler `github.merge_pull_request` SHALL merge the pull reque
 - **THEN** publishing is refused, naming the three methods
 
 ### Requirement: A merge records what it checked
-The event of a `github.merge_pull_request` step SHALL record the required checks it saw, with their conclusions, and the head commit it merged at, or would have merged at when it answered `merged: false`.
+The output of a `github.merge_pull_request` step SHALL record, as `checks`, the checks that counted, with their conclusions, and as `head_sha` the head commit it merged at, or would have merged at when it answered `merged: false`. The output is kept with the run, so the evidence for a merge can be read afterwards.
 
 #### Scenario: The evidence for a merge
 - **WHEN** the handler merges after `test` and `scan` passed at commit `abc123`
-- **THEN** the step's event lists `test` and `scan` with `success`, and `abc123`
+- **THEN** the step's output lists `test` and `scan` with `success`, and `abc123`
 
 ### Requirement: A merge that cannot be made is reported, not failed
 `github.merge_pull_request` SHALL succeed with `merged: false` and a `reason`, and SHALL merge nothing, when:

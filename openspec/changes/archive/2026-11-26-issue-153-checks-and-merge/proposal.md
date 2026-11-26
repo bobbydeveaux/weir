@@ -12,7 +12,7 @@ Closes issue 153.
 - **Each failed check says whether it also fails on the base branch.** A workflow can then tell a failure the pull request caused from one that was there already.
 - **Merging is the connection's decision.** The merge handlers run only on a connection with `allow_merge: true`, false unless set. The default branch still can't be written to except by merging a pull request.
 - **GitHub's auto-merge.** `github.enable_auto_merge` lets GitHub merge once every rule is met, including a required review, so Weir neither polls nor approves.
-- **A handler that merges.** `github.merge_pull_request` merges with the method the step must name, only at the head commit it was given, and records the checks it saw. It refuses, with `merged: false` and a reason, when a check failed or is still running, when no check ran, when the branch moved, or when GitHub's own rules refuse.
+- **A handler that merges.** `github.merge_pull_request` merges with the method the step must name, only at the head commit it was given, and records the checks it saw in its output. It refuses, with `merged: false` and a reason, when a check failed or is still running, when no check ran, when the branch moved, or when GitHub's own rules refuse.
 - **A commit can add to a branch that exists.** With `update: true`, `github.commit` puts a further commit on the branch when the step's files differ from it. Without `update` it behaves as before.
 - **A handler can ask to be run again later.** A deterministic handler may answer "not yet, try again in this long". The step goes back in the queue and keeps its attempts, and the step's `timeout` is its limit, as for a poll step.
 - **An expression can see how many times a step has run.** `steps.<id>.visit` is the number of that step's latest visit, so a `next` rule can stop a loop: `steps.checks.visit < 3`.
@@ -41,9 +41,10 @@ None.
 
 ## Impact
 
-- `worker/`: `github.checks` and `github.merge_pull_request`; `github.commit` reads `update`; the handler interface gains a "not yet" answer.
+- `worker/`: `github.checks`, `github.merge_pull_request` and `github.enable_auto_merge`; `github.commit` reads `update`; the handler interface gains a "not yet" answer.
 - `engine/`: a deferred deterministic step goes through the same path as a poll that is not done, in one transaction, and stops at the step's `timeout`. `scope()` adds `visit`.
-- No change to the database or the HTTP API.
+- The database gains one column, `connections.allow_merge`, false unless set.
+- The HTTP API gains two fields: `allow_merge` when a connection is put, and `warnings` in the reply to publishing a definition, present only when there is one.
 - A GitHub App used with the new handlers needs three more permissions: `checks: read`, `statuses: read` and `actions: read`. Whether a check is required is read from GitHub's GraphQL API, per pull request, so the App needs no access to the repository's settings. An App without a permission gets an error that names it.
 - Rules that must not be weakened:
   - **Weir stores references to secrets, never secrets.** Kept: both handlers use the connection, as `github.commit` does, and a token is minted for the one repository with the least each call needs.

@@ -3,6 +3,7 @@ package api_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -40,6 +41,7 @@ steps:
       from: '"fix"'
       branch: input.branch
       title: '"Fix the build"'
+      update: 'has(input.update) && input.update'
       body: '"Made by a test."'
 `
 
@@ -59,7 +61,11 @@ func gitIn(t *testing.T, dir string, args ...string) string {
 
 // fixer stands in for an agent in a checkout: it reads a file to show the
 // checkout arrived, then reports what it changed.
-type fixer struct{ found string }
+type fixer struct {
+	found string
+	// text is what the agent leaves in main.go. Empty means the usual fix.
+	text string
+}
 
 func (f *fixer) Name() string { return "fake" }
 func (f *fixer) Decide(context.Context, runner.DecideRequest) (runner.DecideResult, error) {
@@ -77,8 +83,12 @@ func (f *fixer) Run(ctx context.Context, req runner.RunRequest) (runner.RunResul
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "main.go"))
 	f.found = string(data)
+	text := f.text
+	if text == "" {
+		text = "package main // fixed\n"
+	}
 	res.Files = []runner.File{
-		{Name: "main.go", Data: []byte("package main // fixed\n")},
+		{Name: "main.go", Data: []byte(text)},
 		{Name: "docs/new.md", Data: []byte("# New\n")},
 		{Name: "old.go", Deleted: true},
 	}
@@ -127,10 +137,11 @@ func TestAnAgentsChangesBecomeABranchAndAPullRequest(t *testing.T) {
 
 	agent := &fixer{}
 	w := &worker.Worker{Engine: eng, Handlers: reg, Runner: agent}
+	update := false
 	run := func(branch string) engine.RunView {
 		t.Helper()
 		id, _, err := eng.StartRun(ctx, engine.StartRequest{Namespace: "code", Name: "fix-and-propose", Requester: "alice",
-			Input: json.RawMessage(`{"branch": "` + branch + `"}`)})
+			Input: json.RawMessage(fmt.Sprintf(`{"branch": %q, "update": %t}`, branch, update))})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -207,5 +218,46 @@ func TestAnAgentsChangesBecomeABranchAndAPullRequest(t *testing.T) {
 	// The default branch is never written to.
 	if v := run("main"); v.Status == "succeeded" || !strings.Contains(string(mustJSON(v)), "must go on a new branch") {
 		t.Errorf("committing to main: %s", mustJSON(v))
+	}
+
+	// With update, the same files change nothing on the branch, so nothing
+	// is pushed: a step that is tried again is still safe.
+	update = true
+	same := run("weir/fix-1")
+	_ = json.Unmarshal(same.Output, &out)
+	if same.Status != "succeeded" || out.Pushed || out.PullRequest.Opened || out.PullRequest.Number == 0 {
+		t.Errorf("update with the same files: %s", mustJSON(same))
+	}
+	// Files that differ from the branch become one more commit on it, in
+	// the pull request that is already open.
+	agent.text = "package main // fixed again\n"
+	more := run("weir/fix-1")
+	out.Commit = ""
+	_ = json.Unmarshal(more.Output, &out)
+	if more.Status != "succeeded" || !out.Pushed || len(out.Commit) < 7 || out.PullRequest.Opened || out.PullRequest.Number == 0 {
+		t.Errorf("update with new files: %s", mustJSON(more))
+	}
+	added := t.TempDir()
+	gitIn(t, added, "clone", "--quiet", "--branch", "weir/fix-1", origin, ".")
+	if data, _ := os.ReadFile(filepath.Join(added, "main.go")); string(data) != "package main // fixed again\n" {
+		t.Errorf("main.go on the branch after a second commit = %q", data)
+	}
+	if count := strings.TrimSpace(gitIn(t, added, "rev-list", "--count", "HEAD")); count != "3" {
+		t.Errorf("the branch has %s commits: the first, the fix and the second fix were expected", count)
+	}
+	if main := gitIn(t, added, "show", "origin/main:main.go"); main != "package main\n" {
+		t.Errorf("main was changed: %q", main)
+	}
+	gh.mu.Lock()
+	pulls = len(gh.pulls)
+	gh.mu.Unlock()
+	if pulls != 1 {
+		t.Errorf("%d pull requests are open after a second commit", pulls)
+	}
+	// A branch that is not there yet is made from the base, as without update.
+	fresh := run("weir/fix-2")
+	_ = json.Unmarshal(fresh.Output, &out)
+	if fresh.Status != "succeeded" || !out.Pushed || !out.PullRequest.Opened {
+		t.Errorf("update for a branch that is not there: %s", mustJSON(fresh))
 	}
 }

@@ -39,6 +39,13 @@ var (
 	GitHubWritePulls = map[string]string{"pull_requests": "write", "contents": "read", "metadata": "read"}
 	// GitHubCommit is enough to push a branch and open its pull request.
 	GitHubCommit = map[string]string{"contents": "write", "pull_requests": "write", "metadata": "read"}
+	// GitHubChecks is enough to read a pull request's checks, their logs and
+	// how they stand on the base branch. It can write nothing.
+	GitHubChecks = map[string]string{"pull_requests": "read", "checks": "read", "statuses": "read", "actions": "read",
+		"contents": "read", "metadata": "read"}
+	// GitHubMerge is enough to read a pull request's checks and merge it.
+	GitHubMerge = map[string]string{"pull_requests": "write", "contents": "write", "checks": "read", "statuses": "read",
+		"metadata": "read"}
 )
 
 // githubTokens remembers tokens for a few minutes, in memory only, so that an
@@ -200,6 +207,10 @@ func (r *Registry) GitHubToken(ctx context.Context, client *http.Client, to engi
 	_, name, _ := strings.Cut(repo, "/")
 	request := map[string]any{"repositories": []string{name}, "permissions": perms}
 	if err := githubCall(ctx, client, http.MethodPost, fmt.Sprintf("%s/app/installations/%d/access_tokens", api, installation.ID), jwt, request, &minted); err != nil {
+		// Most often the App was never given one of the permissions. Say which.
+		if lacks := r.lacks(ctx, client, to, perms); lacks != "" {
+			return "", fmt.Errorf("connection %s: its GitHub App lacks the permission %s, which this call needs", to.Connection, lacks)
+		}
 		return "", fmt.Errorf("connection %s: GitHub would not give its App a token for %s: %w", to.Connection, repo, err)
 	}
 	if minted.Token == "" {
@@ -212,6 +223,25 @@ func (r *Registry) GitHubToken(ctx context.Context, client *http.Client, to engi
 	r.github.held[cacheKey] = heldToken{token: minted.Token, until: time.Now().Add(tokenLife)}
 	r.github.mu.Unlock()
 	return minted.Token, nil
+}
+
+// lacks names the permissions in perms that a connection's App does not
+// have, such as "checks: read", or nothing when it has them all or cannot be
+// asked.
+func (r *Registry) lacks(ctx context.Context, client *http.Client, to engine.Endpoint, perms map[string]string) string {
+	app, err := r.GitHubApp(ctx, client, to)
+	if err != nil {
+		return ""
+	}
+	var missing []string
+	for name, level := range perms {
+		has := app.Permissions[name]
+		if has == "" || (level == "write" && has == "read") {
+			missing = append(missing, name+": "+level)
+		}
+	}
+	sort.Strings(missing)
+	return strings.Join(missing, ", ")
 }
 
 // GitHubAppStatus is what a GitHub App is and where it is installed.

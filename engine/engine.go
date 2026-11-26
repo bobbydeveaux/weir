@@ -60,6 +60,9 @@ type Engine struct {
 	// HandlerExists, when set, lets Publish refuse a definition that names an
 	// unregistered deterministic handler.
 	HandlerExists func(name string) bool
+	// HandlerRules, when set, lets Publish refuse a deterministic step that
+	// its handler says is wrong, such as one without an input it needs.
+	HandlerRules func(s *spec.Step) []string
 	// WorkspaceExists, when set, lets Publish refuse a definition that names
 	// a way of preparing a working directory that is not registered.
 	WorkspaceExists func(name string) bool
@@ -226,6 +229,9 @@ type Endpoint struct {
 	// looked up for that workspace and no other.
 	Workspace string
 	Auth      Auth
+	// AllowMerge says that a pull request may be merged through this
+	// connection. It is false unless whoever manages the connection set it.
+	AllowMerge bool
 }
 
 // Pool returns the database the engine uses, for a part of the program that
@@ -256,6 +262,18 @@ func (e *Engine) PutConnection(ctx context.Context, name, baseURL string, auth A
 	return err
 }
 
+// AllowMerge says whether pull requests may be merged through a connection.
+// It is set apart from the rest of the connection because it is a decision
+// about what Weir may do, not about how it signs in.
+func (e *Engine) AllowMerge(ctx context.Context, name string, allow bool) error {
+	tag, err := e.pool.Exec(ctx, `UPDATE connections SET allow_merge = $3 WHERE workspace_id = $1::uuid AND name = $2`,
+		e.workspace, name, allow)
+	if err == nil && tag.RowsAffected() == 0 {
+		return fmt.Errorf("connection %q: %w", name, ErrNotFound)
+	}
+	return err
+}
+
 // Connection finds a connection in this engine's workspace: where it is, and
 // how Weir signs in to it.
 func (e *Engine) Connection(ctx context.Context, name string) (Endpoint, error) {
@@ -266,10 +284,10 @@ func (e *Engine) Connection(ctx context.Context, name string) (Endpoint, error) 
 func (e *Engine) endpoint(ctx context.Context, q querier, workspace, name string) (Endpoint, error) {
 	ep := Endpoint{Connection: name}
 	err := q.QueryRow(ctx, `
-		SELECT c.base_url, w.slug, c.auth_kind, COALESCE(c.secret_ref, ''), COALESCE(c.auth_header, ''), COALESCE(c.auth_username, ''), COALESCE(c.auth_app, '')
+		SELECT c.base_url, w.slug, c.auth_kind, COALESCE(c.secret_ref, ''), COALESCE(c.auth_header, ''), COALESCE(c.auth_username, ''), COALESCE(c.auth_app, ''), c.allow_merge
 		FROM connections c JOIN workspaces w ON w.id = c.workspace_id
 		WHERE c.workspace_id = $1::uuid AND c.name = $2`, workspace, name).
-		Scan(&ep.URL, &ep.Workspace, &ep.Auth.Kind, &ep.Auth.Secret, &ep.Auth.Header, &ep.Auth.Username, &ep.Auth.App)
+		Scan(&ep.URL, &ep.Workspace, &ep.Auth.Kind, &ep.Auth.Secret, &ep.Auth.Header, &ep.Auth.Username, &ep.Auth.App, &ep.AllowMerge)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ep, fmt.Errorf("connection %q: %w", name, ErrNotFound)
 	}
@@ -285,6 +303,9 @@ type Published struct {
 	Version   int
 	// Unsupported lists parts of the definition that parsed but are not acted on yet.
 	Unsupported []string
+	// Warnings lists what the person publishing should know, such as a loop
+	// with no limit. They do not stop the definition being published.
+	Warnings []string
 }
 
 // Publish validates source and stores it as the next immutable version of its
@@ -294,7 +315,7 @@ func (e *Engine) Publish(ctx context.Context, source []byte, by string) (*Publis
 	if err != nil {
 		return nil, err
 	}
-	if err := def.Validate(spec.ValidateOptions{HandlerExists: e.HandlerExists, WorkspaceExists: e.WorkspaceExists}); err != nil {
+	if err := def.Validate(spec.ValidateOptions{HandlerExists: e.HandlerExists, WorkspaceExists: e.WorkspaceExists, HandlerRules: e.HandlerRules}); err != nil {
 		return nil, err
 	}
 	// Every reference must resolve now, so that a run cannot fail later for a missing one.
@@ -346,7 +367,7 @@ func (e *Engine) Publish(ctx context.Context, source []byte, by string) (*Publis
 		return nil, err
 	}
 
-	out := &Published{Namespace: def.Namespace, Name: def.Name, Unsupported: def.Unsupported()}
+	out := &Published{Namespace: def.Namespace, Name: def.Name, Unsupported: def.Unsupported(), Warnings: def.Warnings()}
 	err = e.inTx(ctx, func(tx pgx.Tx) error {
 		var defID, versionID string
 		err := tx.QueryRow(ctx, `
@@ -649,7 +670,7 @@ func (e *Engine) scope(ctx context.Context, tx pgx.Tx, run *runRow) (spec.Scope,
 		Run:   map[string]any{"id": run.id, "requester": run.requester},
 	}
 	rows, err := tx.Query(ctx, `
-		SELECT DISTINCT ON (step_key) step_key, output::text, COALESCE(label, ''), COALESCE(outcome, '')
+		SELECT DISTINCT ON (step_key) step_key, output::text, COALESCE(label, ''), COALESCE(outcome, ''), visit
 		FROM steps WHERE run_id = $1::uuid AND compensates IS NULL
 		ORDER BY step_key, visit DESC`, run.id)
 	if err != nil {
@@ -659,7 +680,8 @@ func (e *Engine) scope(ctx context.Context, tx pgx.Tx, run *runRow) (spec.Scope,
 	for rows.Next() {
 		var key, label, outcome string
 		var out *string
-		if err := rows.Scan(&key, &out, &label, &outcome); err != nil {
+		var visit int64
+		if err := rows.Scan(&key, &out, &label, &outcome, &visit); err != nil {
 			return sc, err
 		}
 		var output any
@@ -668,7 +690,7 @@ func (e *Engine) scope(ctx context.Context, tx pgx.Tx, run *runRow) (spec.Scope,
 				return sc, err
 			}
 		}
-		sc.Steps[key] = map[string]any{"output": output, "label": label, "outcome": outcome, "files": []any{}}
+		sc.Steps[key] = map[string]any{"output": output, "label": label, "outcome": outcome, "files": []any{}, "visit": visit}
 	}
 	if err := rows.Err(); err != nil {
 		return sc, err

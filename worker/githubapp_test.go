@@ -76,6 +76,12 @@ func newAppGitHub(t *testing.T, key *rsa.PublicKey) *appGitHub {
 			var in map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&in)
 			g.asked = append(g.asked, in)
+			// This App was given contents and pull requests, and nothing else.
+			if perms, _ := in["permissions"].(map[string]any); perms["checks"] != nil {
+				w.WriteHeader(422)
+				_, _ = io.WriteString(w, `{"message": "The permissions requested are not granted to this installation."}`)
+				return
+			}
 			w.WriteHeader(201)
 			_, _ = io.WriteString(w, `{"token": "ghs_minted"}`)
 		default:
@@ -181,6 +187,43 @@ func TestEachGitHubCallAsksForTheLeastItNeeds(t *testing.T) {
 		if string(got) != string(want) {
 			t.Errorf("%s %s needs %s, want %s", tt.method, tt.path, got, want)
 		}
+	}
+}
+
+func TestReadingChecksAndMergingAskForTheLeastAndNameWhatTheAppLacks(t *testing.T) {
+	// Reading checks can write nothing. Merging can write, and still reads checks.
+	for name, level := range GitHubChecks {
+		if level != "read" {
+			t.Errorf("reading checks asks to %s %s", level, name)
+		}
+	}
+	for _, name := range []string{"pull_requests", "checks", "statuses", "actions"} {
+		if GitHubChecks[name] != "read" {
+			t.Errorf("reading checks does not ask to read %s", name)
+		}
+	}
+	if GitHubMerge["contents"] != "write" || GitHubMerge["pull_requests"] != "write" || GitHubMerge["checks"] != "read" {
+		t.Errorf("merging asks for %v", GitHubMerge)
+	}
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pemKey := string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}))
+	gh := newAppGitHub(t, &key.PublicKey)
+	reg := NewRegistry()
+	env := map[string]string{"WEIR_SECRET__ACME__GITHUB_APP_KEY": pemKey}
+	reg.Secrets = &secrets.Resolver{Getenv: func(k string) string { return env[k] }}
+	to := engine.Endpoint{Connection: "github", URL: gh.srv.URL, Workspace: "acme",
+		Auth: engine.Auth{Kind: secrets.GitHubApp, App: "Iv23test", Secret: "env:GITHUB_APP_KEY"}}
+	// The App may write contents and nothing else, so it cannot read checks.
+	_, err = reg.GitHubToken(context.Background(), nil, to, "acme/app", GitHubChecks)
+	if err == nil || !strings.Contains(err.Error(), "checks: read") || !strings.Contains(err.Error(), "actions: read") {
+		t.Errorf("an App that lacks a permission: %v", err)
+	}
+	if err != nil && strings.Contains(err.Error(), "contents") {
+		t.Errorf("the error names a permission the App has: %v", err)
 	}
 }
 

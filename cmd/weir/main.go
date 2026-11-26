@@ -197,7 +197,9 @@ func (a *app) engine() (*engine.Engine, config.Config, func(), error) {
 	worker.RegisterGitHubTools(a.reg, eng, nil)
 	worker.RegisterGitHubCheckout(a.reg, eng, nil)
 	worker.RegisterGitHubCommit(a.reg, eng, nil)
-	eng.HandlerExists, eng.ToolClass = a.reg.Exists, a.reg.ToolClass
+	worker.RegisterGitHubChecks(a.reg, eng, nil)
+	worker.RegisterGitHubMerge(a.reg, eng, nil)
+	eng.HandlerExists, eng.HandlerRules, eng.ToolClass = a.reg.Exists, a.reg.Rules, a.reg.ToolClass
 	eng.WorkspaceExists = a.reg.WorkspaceExists
 	return eng, cfg, pool.Close, nil
 }

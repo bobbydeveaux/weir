@@ -36,6 +36,10 @@ type commitInput struct {
 	Title   string `json:"title"`
 	Body    string `json:"body"`
 	Message string `json:"message"`
+	// Update says that a branch which already exists is to be given a further
+	// commit, when the files change something on it. Without it, a branch
+	// that exists is left as it is.
+	Update bool `json:"update"`
 	// Author is who the commit is by. Empty means "weir".
 	Author struct {
 		Name  string `json:"name"`
@@ -51,6 +55,10 @@ type commitInput struct {
 // request. The token that can write is asked for only now. Running it twice
 // is safe: a branch that is already there is not pushed again, and a pull
 // request that is already open is returned.
+//
+// With "update", a branch that is already there is given a further commit,
+// when the files change something on it. That is still safe to run twice: the
+// second time the files change nothing. A push is never forced.
 func RegisterGitHubCommit(reg *Registry, eng *engine.Engine, client *http.Client) {
 	if client == nil {
 		client = &http.Client{Timeout: 30 * time.Second, CheckRedirect: secrets.SameHost}
@@ -96,10 +104,11 @@ func RegisterGitHubCommit(reg *Registry, eng *engine.Engine, client *http.Client
 		// A branch that is already there was pushed by an earlier try at this
 		// step. It is left as it is, and only the pull request is seen to.
 		status, err := g.do(ctx, http.MethodGet, "/git/ref/heads/"+in.Branch, nil, nil)
+		exists := err == nil
 		switch {
-		case err == nil:
+		case exists && !in.Update:
 			out["pushed"] = false
-		case status == http.StatusNotFound:
+		case exists || status == http.StatusNotFound:
 			remote, err := reg.remote(g.api, g.repo)
 			if err != nil {
 				return nil, err
@@ -114,14 +123,23 @@ func RegisterGitHubCommit(reg *Registry, eng *engine.Engine, client *http.Client
 			if strings.TrimSpace(message) == "" {
 				message = in.Title
 			}
-			sha, changed, err := commit(ctx, token, remote, base, in.Branch, message, in.Author.Name, in.Author.Email, files)
+			// A branch that exists is built on; a new one starts from the base.
+			from := base
+			if exists {
+				from = in.Branch
+			}
+			sha, changed, err := commit(ctx, token, remote, from, in.Branch, message, in.Author.Name, in.Author.Email, files)
 			if err != nil {
 				return nil, fmt.Errorf("commit to %s: %w", g.repo, err)
 			}
-			if !changed {
+			switch {
+			case changed:
+				out["pushed"], out["commit"] = true, sha
+			case exists:
+				out["pushed"] = false
+			default:
 				return json.Marshal(map[string]any{"changed": false, "reason": "the files are the same as on " + base})
 			}
-			out["pushed"], out["commit"] = true, sha
 		default:
 			return nil, err
 		}
@@ -135,23 +153,26 @@ func RegisterGitHubCommit(reg *Registry, eng *engine.Engine, client *http.Client
 	})
 }
 
-// commit clones remote at base into a new directory, applies files, commits
-// them on branch and pushes it. It returns the commit, or changed false when
-// the files made no difference.
+// commit clones remote at from into a new directory, applies files, commits
+// them on branch and pushes it. from is the base for a new branch, or the
+// branch itself when it is being added to. It returns the commit, or changed
+// false when the files made no difference.
 //
 // Git is run only in the clone made here. It never touches a directory an
 // agent has been in.
-func commit(ctx context.Context, token, remote, base, branch, message, name, email string, files []engine.NewFile) (sha string, changed bool, err error) {
+func commit(ctx context.Context, token, remote, from, branch, message, name, email string, files []engine.NewFile) (sha string, changed bool, err error) {
 	dir, err := os.MkdirTemp("", "weir-commit-")
 	if err != nil {
 		return "", false, err
 	}
 	defer os.RemoveAll(dir)
-	if _, err := git(ctx, token, remote, dir, "clone", "--quiet", "--depth", "1", "--no-recurse-submodules", "--branch", base, "--", remote, "."); err != nil {
+	if _, err := git(ctx, token, remote, dir, "clone", "--quiet", "--depth", "1", "--no-recurse-submodules", "--branch", from, "--", remote, "."); err != nil {
 		return "", false, err
 	}
-	if _, err := git(ctx, "", remote, dir, "checkout", "--quiet", "-b", branch); err != nil {
-		return "", false, err
+	if from != branch {
+		if _, err := git(ctx, "", remote, dir, "checkout", "--quiet", "-b", branch); err != nil {
+			return "", false, err
+		}
 	}
 	for _, f := range files {
 		clean, err := runner.CleanPath(f.Path)
