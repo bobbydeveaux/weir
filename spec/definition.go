@@ -206,6 +206,10 @@ type ValidateOptions struct {
 	// WorkspaceExists reports whether a way of preparing a working directory
 	// is registered.
 	WorkspaceExists func(name string) bool
+	// HandlerRules returns what is wrong with a deterministic step as its
+	// handler sees it: an input it must have, a field it must set. When nil,
+	// no handler is asked.
+	HandlerRules func(s *Step) []string
 }
 
 var (
@@ -467,6 +471,11 @@ func validateDeterministic(s *Step, at string, opts ValidateOptions, add func(st
 	}
 	if s.Compensate != "" && opts.HandlerExists != nil && !opts.HandlerExists(s.Compensate) {
 		add("%s: compensate handler %q is not registered", at, s.Compensate)
+	}
+	if opts.HandlerRules != nil {
+		for _, problem := range opts.HandlerRules(s) {
+			add("%s: %s", at, problem)
+		}
 	}
 	forbid(s, at, add, "deterministic", fieldsExcept("handler"))
 }

@@ -558,15 +558,74 @@ Proven against the real GitHub: a private repository was cloned as a GitHub App,
 | `message` | The commit's message. The title if left out |
 | `author` | `name` and `email` for the commit. `weir` if left out |
 | `connection` | The connection to use. `github` if left out |
+| `update` | `true` to put a further commit on a branch that already exists, when the files change something on it. Left out, a branch that exists is left as it is |
 
 - It clones the repository afresh. Nothing from the directory the agent worked in is used, so nothing an agent left behind can run.
 - The token that can write is asked for only at this point, after the agent has exited, for this one repository.
 - It will not write to the base branch, into a `.git` directory, or through a link that leads out of the repository.
 - Running it twice is safe: a branch that is already there is not pushed again, and a pull request that is already open is returned.
+- With `update: true`, a branch that is already there is given a further commit when the files change something on it. That is how a second attempt reaches a pull request that is already open. The push is never forced.
 - If the files make no difference, it says so and opens nothing.
 - Its output holds the branch, the commit and the pull request's number and address.
 
 Proven against the real GitHub, end to end: a repository was checked out as a GitHub App, a real agent in a container of its own added one file, and this handler pushed a branch and opened a pull request. Whether a file is executable is not carried over.
+
+### Waiting for a pull request's checks, and merging it
+
+Three deterministic handlers finish what `github.commit` starts. None of them is given to an agent.
+
+`github.checks` waits for the checks on a pull request's head commit and says whether they passed. While a check that counts is unfinished it asks to be run again, at growing intervals, and uses none of the step's attempts. The step must set a `timeout`, which is the limit on the wait.
+
+```yaml
+- id: checks
+  kind: deterministic
+  handler: github.checks
+  timeout: 1h
+  input:
+    repo: input.repo
+    pull_request: steps.propose.output.pull_request.number
+    count: '"all"'
+  next:
+    - { when: output.state == "passed", go: merge }
+    - { when: output.state == "failed" && steps.checks.visit < 3, go: repair }
+    - { go: person }
+
+- id: merge
+  kind: deterministic
+  handler: github.merge_pull_request
+  input:
+    repo: input.repo
+    pull_request: steps.propose.output.pull_request.number
+    count: '"all"'
+    method: '"squash"'
+    head_sha: steps.checks.output.head_sha
+```
+
+| Input | Meaning |
+|---|---|
+| `pull_request` | The pull request's number |
+| `count` | Which checks decide. `required`, the default: those GitHub says are required for this pull request. `all`: every check on the head commit, for a repository with no branch rules |
+| `checks` | Names of checks that count as well, and must have ended in `success` |
+| `every` | How long to wait before looking again. 30 seconds if left out; each wait is longer than the last, up to ten times this |
+| `settle` | With `count: all`, how long a commit with no checks is given for one to appear. One minute if left out |
+| `repo`, `connection` | As for `github.commit` |
+
+The output holds `state` (`passed`, `failed` or `none`), `head_sha`, `mergeable_state`, `failed` and `other`. Each entry in `failed` has the check's `name`, `url` and `conclusion`, the last 16 KiB of its `log` when it is a GitHub Actions job, and `fails_on_base`: whether the same check also fails on the base branch, which tells a failure the pull request caused from one that was there already. Checks that do not count are listed under `other` and decide nothing.
+
+A required check passes as GitHub passes it: on `success`, `skipped` or `neutral`. A repository with no rules requires nothing, so there the default gives `none` however red the pipeline is. Say `count: all`.
+
+A check's log is text from outside. If you map it into a prompt, say in the prompt that it is data to read and not instructions to follow.
+
+`github.merge_pull_request` merges with the `method` the step must give (`merge`, `squash` or `rebase`), only when every check that counts passed, and only at `head_sha` when one is given. `github.enable_auto_merge` hands the merge to GitHub instead, which makes it once every rule of the base branch is met, a required review included.
+
+- **The connection must allow it.** Both run only through a connection put with `"allow_merge": true`. Whoever manages the connection decides that, not the author of a workflow.
+- **A merge that cannot be made is an answer.** The step succeeds with `merged: false` and a `reason`: a check failed or is unfinished, no check counts and the step does not set `allow_no_checks: true`, the branch moved, the pull request is closed, or GitHub's own rules refuse. A `next` rule can send the run to a person.
+- **No rule is overridden.** A required review still applies.
+- **What was seen is kept.** The output lists the checks that counted, their conclusions and the commit.
+
+A GitHub App needs three more permissions for these: `checks: read`, `statuses: read` and `actions: read`. Without one, the step fails with an error that names it.
+
+A `next` rule may send a run back to an earlier step, as `checks` does above. `steps.<id>.visit` is the number of that step's latest visit, and is how a rule stops the loop. Publishing warns of a loop that no rule limits.
 
 ### Paths an agent may not change
 

@@ -374,8 +374,12 @@ func (s *server) publish(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
-	reply(w, http.StatusCreated, map[string]any{"namespace": out.Namespace, "name": out.Name, "version": out.Version,
-		"not_yet_enforced": out.Unsupported})
+	published := map[string]any{"namespace": out.Namespace, "name": out.Name, "version": out.Version,
+		"not_yet_enforced": out.Unsupported}
+	if len(out.Warnings) > 0 {
+		published["warnings"] = out.Warnings
+	}
+	reply(w, http.StatusCreated, published)
 }
 
 func (s *server) template(w http.ResponseWriter, r *http.Request) {
@@ -410,6 +414,9 @@ func (s *server) connection(w http.ResponseWriter, r *http.Request) {
 		// Auth says how Weir signs in: a kind, and a reference to a secret.
 		// The secret itself is never sent here and never stored.
 		Auth engine.Auth `json:"auth"`
+		// AllowMerge says that pull requests may be merged through this
+		// connection. Left out, they may not.
+		AllowMerge bool `json:"allow_merge"`
 		// Webhook says how the third party signs what it sends to Weir. Left
 		// out, whatever was set before is kept.
 		Webhook *engine.Webhook `json:"webhook"`
@@ -458,6 +465,10 @@ func (s *server) connection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.in(r).PutConnection(r.Context(), r.PathValue("name"), in.BaseURL, in.Auth); err != nil {
+		fail(w, err)
+		return
+	}
+	if err := s.in(r).AllowMerge(r.Context(), r.PathValue("name"), in.AllowMerge); err != nil {
 		fail(w, err)
 		return
 	}

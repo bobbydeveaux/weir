@@ -293,6 +293,11 @@ type Work struct {
 	// RunLeftUSD is what the run may still spend, as it stood when the step
 	// was claimed. It is nil for a run with no budget.
 	RunLeftUSD *float64
+	// Deferred is how many times this step has been put back in the queue
+	// since it last failed, and Waited is how long ago the first of those
+	// runs began. Both are zero for a step that has not been deferred.
+	Deferred int
+	Waited   time.Duration
 }
 
 // Claim takes the next runnable step of one of the given kinds and returns it
@@ -348,6 +353,18 @@ func (e *Engine) Claim(ctx context.Context, kinds []string, workerID string, lea
 		if err != nil {
 			return e.stepFailed(ctx, tx, run, step, failure("reference_missing", err.Error()))
 		}
+
+		// The same attempts Defer counts its timeout from: those since the
+		// last one that ended in failure.
+		var waited float64
+		if err := tx.QueryRow(ctx, `
+			SELECT COUNT(*), COALESCE(EXTRACT(EPOCH FROM now() - MIN(started_at)), 0)::float8 FROM attempts
+			WHERE step_id = $1::uuid AND status = 'deferred' AND number > COALESCE((
+				SELECT MAX(number) FROM attempts WHERE step_id = $1::uuid AND status NOT IN ('running', 'deferred')), 0)`,
+			step.id).Scan(&w.Deferred, &waited); err != nil {
+			return err
+		}
+		w.Waited = time.Duration(waited * float64(time.Second))
 
 		token, hash, err := newToken()
 		if err != nil {

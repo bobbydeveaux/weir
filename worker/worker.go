@@ -36,6 +36,11 @@ type Call struct {
 	IdempotencyKey string
 	RunID          string
 	Step           string
+	// Tries is how many times the handler has answered "not yet" for this
+	// step, and Waited is how long ago the first of those runs began. Both
+	// are zero the first time.
+	Tries  int
+	Waited time.Duration
 }
 
 // Workspace is a request to prepare the directory an agent will work in.
@@ -61,6 +66,17 @@ type permanent struct{ err error }
 func (p permanent) Error() string { return p.err.Error() }
 func (p permanent) Unwrap() error { return p.err }
 
+// notYet is a handler's answer that its work is not ready.
+type notYet struct{ after time.Duration }
+
+func (n notYet) Error() string { return "not ready; to be run again in " + n.after.String() }
+
+// NotYet is returned by a handler whose work is not ready. The step is run
+// again after the delay, with the same input and idempotency key, and uses
+// none of its attempts. The step's timeout is the limit on how long that
+// goes on.
+func NotYet(after time.Duration) error { return notYet{after} }
+
 // Permanent wraps an error to say that retrying will not help.
 func Permanent(err error) error { return permanent{err} }
 
@@ -68,6 +84,7 @@ func Permanent(err error) error { return permanent{err} }
 type Registry struct {
 	mu         sync.RWMutex
 	handlers   map[string]Handler
+	rules      map[string]func(*spec.Step) []string
 	tools      map[string]Tool
 	workspaces map[string]Preparer
 	github     githubTokens
@@ -178,6 +195,30 @@ func (r *Registry) Exists(name string) bool {
 	defer r.mu.RUnlock()
 	_, ok := r.handlers[name]
 	return ok
+}
+
+// RegisterRules adds a check that a handler makes of a step that names it,
+// when a definition is published. It returns what is wrong, in words that
+// read after the step's name.
+func (r *Registry) RegisterRules(name string, check func(*spec.Step) []string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.rules == nil {
+		r.rules = map[string]func(*spec.Step) []string{}
+	}
+	r.rules[name] = check
+}
+
+// Rules returns what a step's handler says is wrong with it. It is what the
+// engine uses to refuse a definition whose step could never work.
+func (r *Registry) Rules(s *spec.Step) []string {
+	r.mu.RLock()
+	check := r.rules[s.Handler]
+	r.mu.RUnlock()
+	if check == nil {
+		return nil
+	}
+	return check(s)
 }
 
 func (r *Registry) get(name string) (Handler, bool) {
@@ -406,7 +447,12 @@ func (w *Worker) deterministic(ctx context.Context, work *engine.Work) error {
 		return w.Engine.Fail(ctx, work.Token, engine.Failure{Type: "handler_missing",
 			Message: "handler " + work.Step.Handler + " is not registered on this worker", Actor: w.ID})
 	}
-	out, err := h(ctx, Call{Input: work.Input, IdempotencyKey: work.IdempotencyKey, RunID: work.RunID, Step: work.Step.ID})
+	out, err := h(ctx, Call{Input: work.Input, IdempotencyKey: work.IdempotencyKey, RunID: work.RunID, Step: work.Step.ID,
+		Tries: work.Deferred, Waited: work.Waited})
+	var wait notYet
+	if errors.As(err, &wait) {
+		return w.Engine.Defer(ctx, work.Token, wait.after)
+	}
 	if err != nil {
 		var perm permanent
 		return w.Engine.Fail(context.WithoutCancel(ctx), work.Token, engine.Failure{Type: "handler_failed", Message: err.Error(),

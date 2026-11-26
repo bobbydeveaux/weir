@@ -14,3 +14,4 @@ Which test proves each requirement. `make spec` checks that every requirement is
 | A handler's output is checked against the step's schema | Not tested: for a deterministic step. The check is in `engine/transitions.go` (`completeTx`) and is the same for every kind; `engine/engine_test.go:TestOutputThatFailsItsSchemaIsRejected` proves it for an ai step only |
 | A deterministic step takes no field of another kind | `spec/definition_test.go:TestValidateFindsEveryProblem` |
 | The server lists its registered handlers | `api/views_test.go:TestWorkspacesAreKeptApartAndCanBeRead` (that at least two handlers are listed is asserted; their names are not) |
+| A handler can ask to be run again later | `api/githubchecks_test.go:TestARuleStopsALoopAndAHandlerAsksToBeRunAgain` (ready the third time and never ready are asserted; a step with no timeout is not run) |

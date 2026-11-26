@@ -53,6 +53,9 @@ type github struct {
 	to     engine.Endpoint
 	// api is the API's base address, and repo is "owner/name".
 	api, repo string
+	// needs, when set, is the permission every call asks for, in place of
+	// what the call's method and path would say.
+	needs map[string]string
 }
 
 // githubFor finds the connection and the repository for a tool call.
@@ -120,7 +123,11 @@ func (g *github) do(ctx context.Context, method, path string, body, out any) (in
 	}
 	if g.to.Auth.Kind == secrets.GitHubApp {
 		// A token for this one repository, with the least this call needs.
-		token, err := g.reg.GitHubToken(ctx, g.client, g.to, g.repo, githubNeeds(method, path))
+		needs := g.needs
+		if needs == nil {
+			needs = githubNeeds(method, path)
+		}
+		token, err := g.reg.GitHubToken(ctx, g.client, g.to, g.repo, needs)
 		if err != nil {
 			return 0, err
 		}
