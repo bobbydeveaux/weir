@@ -10,6 +10,14 @@ imagePullSecrets: []
 # each step is claimed by one worker.
 replicaCount: 1
 
+worker:
+  # How many steps each copy runs at once (WEIR_WORKER_CONCURRENCY), from 1
+  # to 256. An ai step spends most of its time waiting on a model, so raising
+  # this is cheaper than adding copies. Each step holds a database connection
+  # only for short writes; above about 4, raise pool_max_conns in the
+  # database address to match.
+  concurrency: 1
+
 # existingSecret names a Kubernetes Secret you make yourself. Every key in it
 # becomes an environment variable of the server. It may be left empty when
 # secretFiles.adminKey gives the admin key and the database needs no password

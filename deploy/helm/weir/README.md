@@ -43,6 +43,7 @@ Use your cluster's own way of making those Secrets if it has one: External Secre
 | `env` | Any other setting, by name | none |
 | `databaseCA.configMap`, `databaseCA.key` | A ConfigMap of yours holding the certificate authorities for the database, and the file in it. The chart mounts it and sets `WEIR_DATABASE_SSLROOTCERT`. Only for a database given in parts: Weir refuses it beside `WEIR_DATABASE_URL`, which must carry `sslrootcert=` itself | none, `ca.pem` |
 | `replicaCount` | Copies of the server. More than one is safe | 1 |
+| `worker.concurrency` | How many steps each copy runs at once. Sets `WEIR_WORKER_CONCURRENCY`, from 1 to 256. Usually cheaper than more copies, since an ai step mostly waits on a model | 1 |
 | `migrate.enabled` | Bring the database up to date with `weir migrate` | true |
 | `migrate.when` | `before`: in a Job before each install and upgrade. `start`: in the server's pod before it serves, for a cluster that fills Secrets in after install (External Secrets Operator) | `before` |
 | `agents.runner` | `kubernetes` (a Job each) or `inline` (beside the worker) | `kubernetes` |

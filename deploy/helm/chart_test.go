@@ -228,3 +228,25 @@ func TestTheChartRefusesSecretFilesThatCannotWork(t *testing.T) {
 		t.Errorf("with env.WEIR_REQUIRE_ADMIN_KEY=1 and no admin key the chart rendered:\n%s", out)
 	}
 }
+
+func TestTheChartSetsHowManyStepsEachServerRunsAtOnce(t *testing.T) {
+	for _, c := range []struct {
+		set  []string
+		want string
+	}{
+		{nil, `"1"`},
+		{[]string{"worker.concurrency=4"}, `"4"`},
+	} {
+		out, err := render(t, append(c.set, "migrate.when=start")...)
+		if err != nil {
+			t.Fatalf("helm template: %v\n%s", err, out)
+		}
+		want := "- name: WEIR_WORKER_CONCURRENCY\n              value: " + c.want + "\n"
+		if got := strings.Count(out, want); got != 1 {
+			t.Errorf("with %v the chart sets WEIR_WORKER_CONCURRENCY to %s in %d containers; want 1, the server's and not the migration's\n%s", c.set, c.want, got, out)
+		}
+		if got := strings.Count(out, "WEIR_WORKER_CONCURRENCY"); got != 1 {
+			t.Errorf("with %v WEIR_WORKER_CONCURRENCY appears %d times; want once", c.set, got)
+		}
+	}
+}

@@ -46,6 +46,8 @@ spec:
           {{- include "weir.env" . | nindent 10 }}
             - name: WEIR_HTTP_ADDR
               value: ":8080"
+            - name: WEIR_WORKER_CONCURRENCY
+              value: {{ .Values.worker.concurrency | quote }}
             - name: WEIR_AGENT_RUNNER
               value: {{ .Values.agents.runner | quote }}
             {{- if eq .Values.agents.runner "kubernetes" }}

@@ -172,6 +172,7 @@ How work is claimed, held and returned.
 - [x] Heartbeats that extend a lease
 - [x] Retries with backoff, and per-attempt and overall timeouts
 - [x] A sweep for expired leases, due timers and undelivered outbox rows (hooks in the outbox are delivered by the worker)
+- [x] One worker runs several steps at once: `WEIR_WORKER_CONCURRENCY`, default 1, and `worker.concurrency` in the Helm chart. Each step keeps its own lease, and the sweep runs while every slot is busy (#159; tested against Postgres with a deterministic handler, not with a real model; the database pool is not sized to the setting, which is documented instead)
 - [ ] A local wake-up path: Postgres notifications, with polling as the fallback (notifications drive the streams; workers and hook delivery still poll, every half second) (#10)
 
 ### 6. Deterministic steps

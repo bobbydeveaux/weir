@@ -61,7 +61,7 @@ The full list, with an issue for each item, is [docs/build/02-epics.md](docs/bui
 - **Running an agent on AWS.** An agent can run in a container of its own with Docker, on Kubernetes or as a Cloud Run job. Fargate and AgentCore are not built.
 - **An agent image per application.** One image serves every agent on a server.
 - **Pipes as packages.** The parts exist (connections, webhooks, tools), and GitHub has all three, but there is no installable package or catalogue.
-- **Parallel steps, fan-out and sub-workflows.** Steps run one at a time.
+- **Parallel steps, fan-out and sub-workflows.** A run's steps run one at a time. A worker can run steps of different runs at once (`WEIR_WORKER_CONCURRENCY`).
 - **Tiers, sandbox settings and a time limit on a whole run.** `tiers`, a step's `sandbox` and `minutes` in a definition's top-level `budget` parse, and publishing says they are not enforced. A run has no time limit. A step's own `budget.minutes` is enforced.
 - **A tagged release.** There is no version yet, and the contract will change before `v0.1.0`.
 
@@ -105,6 +105,7 @@ To make one real call through the Claude command line: `WEIR_TEST_CLAUDE=1 go te
 | `PORT` | The port to listen on, where a platform sets it and `WEIR_HTTP_ADDR` is not set | none |
 | `WEIR_ADMIN_KEY_FILE` | A file holding the admin key, in place of `WEIR_ADMIN_KEY`, for a platform that hands out secrets as files. Read once at start, with surrounding whitespace trimmed. See "The admin key from a file" below | not set |
 | `WEIR_REQUIRE_ADMIN_KEY` | Refuse to start without `WEIR_ADMIN_KEY` or `WEIR_ADMIN_KEY_FILE`. The container image sets it | not set |
+| `WEIR_WORKER_CONCURRENCY` | How many steps the server's worker runs at once, from 1 to 256. An `ai` step spends most of its time waiting on a model, so one server can hold many. Each step is still claimed by one worker and keeps its own lease. Above about 4, raise `pool_max_conns` in the database address to match, or steps wait for a connection | 1 |
 | `WEIR_AGENT_RUNNER` | Where agents run: `inline` (beside the worker), `docker` (a container each), `kubernetes` (a Job each) or `cloudrun` (a run of a Cloud Run job each). See "Where agents run" below | `inline` |
 | `WEIR_AGENT_IMAGE` | The image agents run in, for `docker`. Build it from `deploy/agent.Dockerfile` | none |
 | `WEIR_AGENT_URL` | Weir's address as an agent's container reaches it | `http://host.docker.internal` and the API's port |
