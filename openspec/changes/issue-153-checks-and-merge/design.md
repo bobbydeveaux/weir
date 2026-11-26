@@ -8,8 +8,8 @@ A poll step already has the right behaviour: a poll that is not done goes back i
 
 A step that uses `github.checks` must set a `timeout`: publishing refuses one without, as it refuses a callback step without one.
 
-### Woken by webhooks, polling as a fallback
-Polling every 30 seconds per waiting step, across many runs, would run into GitHub's rate limits. When the connection receives GitHub webhooks, a `check_run`, `check_suite` or `status` event for the head commit runs the waiting handler again at once, through the existing "an event moves on the steps that were waiting for it" path. Polling stays as the fallback: it backs off up to ten times `every`, and waits for the reset when GitHub's rate-limit headers say the token is nearly out.
+### Polling that backs off
+Polling every 30 seconds per waiting step, across many runs, would run into GitHub's rate limits. So each wait is longer than the last, up to ten times `every`, and the handler waits for the reset when GitHub's rate-limit headers say the token is nearly out. Waking the step from GitHub's webhooks is issue 156.
 
 ### Two handlers, not one
 
@@ -31,12 +31,23 @@ Weir's GitHub spec already says the default branch cannot be written to, and mer
 
 A repository with no pipeline reports no checks. `github.checks` says `state: none`, and `github.merge_pull_request` refuses unless the step sets `allow_no_checks: true`.
 
-### Which checks count: the ones GitHub requires
-The checks that matter are the ones the base branch's rules require (branch protection and rulesets), as GitHub would apply them to the merge, plus any the step names in `checks`. Counting every check would let one optional, flaky check block merging for ever. Counting `skipped` or `neutral` as passed would let a required check skipped by a path filter slip through. So:
-- a required check passes only on `success`;
-- checks that aren't required are reported under `other`, and decide nothing.
+### Which checks count
+By default, the checks GitHub says are required for the pull request. Counting every check would let one optional, flaky check block merging for ever.
 
-`mergeable_state` is passed through, so a workflow can see GitHub's own view.
+A repository with no branch rules requires nothing, so there the default reports `none` however red the pipeline is. `count: all` is for those repositories: every check run and commit status on the head commit counts.
+
+Whether a check is required is GitHub's own answer. Its GraphQL API gives `isRequired` for each check run and status of a pull request, which covers branch protection and rulesets as GitHub applies them to the merge. Weir does not read the rules and work it out, so it can't disagree with GitHub, and the App needs no access to the repository's settings.
+
+What passes:
+- a required check passes as GitHub passes it: `success`, `skipped` or `neutral`. A stricter rule would refuse a pull request that `github.enable_auto_merge` merges, and pipelines that skip a job by its own condition are common;
+- a check that counts only because of `count: all` passes on the same three;
+- a check the step names in `checks` passes only on `success`. Naming a check is how a definition says "this one must really have run";
+- checks that don't count are reported under `other`, and decide nothing.
+
+With `count: all`, a head commit has no checks for the first seconds after a push. The handler waits for `settle`, one minute unless given, before it reports `none`. Required checks need no such wait: GitHub lists them as expected before they start.
+
+`mergeable_state` is passed through, so a workflow can see GitHub's own view. GitHub works it out a few seconds after a push, and until then it is `unknown`; nothing should treat that as final.
+
 ### What a failed check carries
 
 - `name`, `url`, `conclusion`, and `summary` (the check's own, when it has one).
@@ -51,8 +62,8 @@ Without `update`, running the handler again for a branch that exists pushes noth
 
 With `update: true`, the handler clones the branch, applies the step's files, and commits and pushes only if they change something. A retried step is still safe: the second time the files change nothing. The push is never forced.
 
-### Text from outside is marked, not just documented
-A failed check's log goes straight back to an agent that will act on it, which is exactly where prompt injection lands. So handlers mark the fields that hold text from outside (`log`, `summary`), the mark follows the value through expressions, and a prompt receives it inside an `<untrusted>` block that the text can't close. A definition can't turn this off. The rules that must not be weakened are enforced, not left to a note.
+### A check's log is text from outside
+A failed check's log goes back to an agent that will act on it, which is where prompt injection lands. Enforcing a boundary around it is issue 157, which marks such text and keeps it inside a block in the prompt that the text can't close. This change documents the risk and builds nothing a definition could rely on in its place.
 
 ### The method is required
 Many repositories allow only squash merges. A default of `merge` that is often refused is worse than asking, so publishing refuses a merge step without a `method`.

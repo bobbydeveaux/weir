@@ -1,10 +1,10 @@
 ## ADDED Requirements
 
-### Requirement: A handler waits for a pull request's required checks
-The deterministic handler `github.checks` SHALL wait for the checks the base branch's rules require (branch protection and rulesets), and any the step names in `checks`, on the pull request's head commit. While any is unfinished it SHALL ask to be run again after `every`, or 30 seconds. When all have finished it SHALL succeed with `state` (`passed`, `failed` or `none`), `head_sha`, `mergeable_state`, and `failed`, the required or named checks that failed.
+### Requirement: A handler waits for a pull request's checks
+The deterministic handler `github.checks` SHALL wait for the checks that count on the pull request's head commit: with `count: required`, the default, those GitHub says are required for that pull request, and with `count: all`, every check run and commit status. Any the step names in `checks` count too. While any is unfinished it SHALL ask to be run again. When all have finished it SHALL succeed with `state` (`passed`, `failed` or `none`), `head_sha`, `mergeable_state`, and `failed`.
 
 #### Scenario: Every required check passes
-- **WHEN** the base branch requires the checks `test` and `scan`, and both finished with `success` on the head commit
+- **WHEN** GitHub requires the checks `test` and `scan` for the pull request, and both finished with `success` on the head commit
 - **THEN** the step succeeds with `state: passed`, the head commit as `head_sha` and an empty `failed`
 
 #### Scenario: A required check is still running
@@ -17,30 +17,53 @@ The deterministic handler `github.checks` SHALL wait for the checks the base bra
 - **AND** `failed` holds one entry with the name `test`, its address and its conclusion
 
 #### Scenario: Nothing is required
-- **WHEN** the base branch requires no checks and the step names none
+- **WHEN** GitHub requires no checks for the pull request, the step names none, and `count` is not given
 - **THEN** the step succeeds with `state: none`
 
-### Requirement: A check that isn't required decides nothing
-A check that is neither required by the base branch's rules nor named in `checks` SHALL NOT hold up `github.checks` or make it fail, and SHALL be listed under `other` with its conclusion. A required or named check SHALL pass only on `success`.
+#### Scenario: Every check counts, on a repository with no rules
+- **WHEN** the base branch has no rules, the step gives `count: all`, and the check `deploy` ended with `failure`
+- **THEN** the step succeeds with `state: failed`, and `failed` holds `deploy`
+
+#### Scenario: A count that is not one of the two
+- **WHEN** a definition's `github.checks` step gives `count: some`
+- **THEN** publishing is refused, naming `required` and `all`
+
+### Requirement: Which checks count, and what passes
+Whether a check is required SHALL be GitHub's own answer for that pull request, which covers branch protection and rulesets. A required check SHALL pass as GitHub passes it: on `success`, `skipped` or `neutral`. A check that counts only because of `count: all` SHALL pass on the same three. A check the step names in `checks` SHALL pass only on `success`. A check that does not count SHALL NOT hold the step up or fail it, and SHALL be listed under `other` with its conclusion.
 
 #### Scenario: A check that isn't required fails
-- **WHEN** the required checks passed and an optional check `lint-experimental` failed
+- **WHEN** `count` is `required`, the required checks passed and an optional check `lint-experimental` failed
 - **THEN** `state` is `passed`, and `lint-experimental` is listed under `other` with `failure`
 
-#### Scenario: A required check was skipped
-- **WHEN** the required check `test` ended `skipped`
+#### Scenario: A required job was skipped by its own condition
+- **WHEN** the required check `build` ended `skipped`, which GitHub accepts for a merge
+- **THEN** `build` counts as passed
+
+#### Scenario: A named check was skipped
+- **WHEN** the step gives `checks: [test]` and `test` ended `skipped`
 - **THEN** `state` is `failed`, and `failed` holds `test` with `skipped`
 
-### Requirement: A step waiting on checks is woken by GitHub's webhooks
-When the connection receives GitHub webhooks, a `github.checks` step that is waiting SHALL be run again as soon as a `check_run`, `check_suite` or `status` event arrives for its pull request's head commit, without waiting for `every`. Polling SHALL remain as the fallback. Each poll SHALL wait longer than the last, up to ten times `every`. When GitHub's rate-limit headers say the token's limit is low, the handler SHALL wait until the limit resets.
+#### Scenario: Cancelled, with every check counting
+- **WHEN** `count` is `all`, one check ended `skipped` and another `cancelled`
+- **THEN** `state` is `failed`, and `failed` holds the cancelled check only
 
-#### Scenario: A check finishes
-- **WHEN** a step is waiting with `every: 5m` and a `check_run` `completed` event for its head commit arrives after 20 seconds
-- **THEN** the handler runs within seconds of the event, not after five minutes
+### Requirement: With every check counting, the handler waits for checks to appear
+With `count: all`, a head commit that has no check yet SHALL NOT be reported as `none` until `settle` has passed since the step first ran, or one minute when none is given. Until then the handler SHALL ask to be run again.
 
-#### Scenario: No webhooks
-- **WHEN** the connection receives no webhooks
-- **THEN** the handler runs again at `every`, then at longer intervals, until the checks finish or the step's `timeout` passes
+#### Scenario: Straight after a push
+- **WHEN** the step first runs two seconds after the push, and no check has been registered
+- **THEN** the step is queued to run again
+
+#### Scenario: A repository with no pipeline
+- **WHEN** a minute has passed since the step first ran and the head commit still has no check
+- **THEN** the step succeeds with `state: none`
+
+### Requirement: A waiting handler polls less often, and keeps within GitHub's limits
+While checks are unfinished, `github.checks` SHALL run again after `every`, or 30 seconds when none is given, and each wait SHALL be longer than the last, up to ten times `every`. When GitHub's rate-limit headers say the token's limit is low, the handler SHALL wait until the limit resets. `mergeable_state` SHALL be GitHub's own value, and `unknown` when GitHub has not worked it out.
+
+#### Scenario: A slow pipeline
+- **WHEN** a step with `every: 30s` waits on a pipeline that takes an hour
+- **THEN** the waits grow to five minutes and stay there
 
 #### Scenario: Near the rate limit
 - **WHEN** GitHub answers with `x-ratelimit-remaining: 5`
@@ -65,10 +88,6 @@ Each entry in `failed` SHALL hold the end of the job's log as `log`, at most 16 
 - **WHEN** the App has no permission to read the job's log
 - **THEN** the step still succeeds, and the entry has no `log`
 
-#### Scenario: The log is marked as text from outside
-- **WHEN** a failed check's entry holds a `log` and a `summary`
-- **THEN** both are marked as text from outside, as `ai-steps` describes
-
 ### Requirement: Merging is allowed only by the connection
 `github.merge_pull_request` and `github.enable_auto_merge` SHALL run only through a connection that sets `allow_merge: true`, which is false unless set. Otherwise they SHALL refuse before sending anything to GitHub, with an error that names the setting. Whoever manages the connection decides whether Weir may merge, not a definition's author. A merged pull request is the only way they change the default branch.
 
@@ -84,11 +103,11 @@ Each entry in `failed` SHALL hold the end of the job's log as `log`, at most 16 
 - **WHEN** an agent calls `github.put_file` with the default branch, on a connection with `allow_merge: true`
 - **THEN** the call is refused and the default branch is unchanged
 
-### Requirement: A handler merges a pull request whose required checks passed
-The deterministic handler `github.merge_pull_request` SHALL merge the pull request given by `repo` and `pull_request` with `method`, which the step MUST give (`merge`, `squash` or `rebase`), and SHALL succeed with `merged: true` and the merge `commit`. It SHALL merge only when every required check on the head commit passed, and only at `head_sha` when given. It MUST NOT use an override of the repository's rules, so a required review still applies.
+### Requirement: A handler merges a pull request whose checks passed
+The deterministic handler `github.merge_pull_request` SHALL merge the pull request given by `repo` and `pull_request` with `method`, which the step MUST give (`merge`, `squash` or `rebase`), and SHALL succeed with `merged: true` and the merge `commit`. It SHALL merge only when every check that counts passed, by `count` and `checks` as `github.checks` reads them, and only at `head_sha` when given. It MUST NOT use an override of the repository's rules.
 
 #### Scenario: A squash merge
-- **WHEN** every required check passed and the step gives `method: squash`
+- **WHEN** every check that counts passed and the step gives `method: squash`
 - **THEN** the pull request is merged as one commit
 - **AND** the output holds `merged: true` and that commit
 
@@ -109,8 +128,8 @@ The event of a `github.merge_pull_request` step SHALL record the required checks
 
 ### Requirement: A merge that cannot be made is reported, not failed
 `github.merge_pull_request` SHALL succeed with `merged: false` and a `reason`, and SHALL merge nothing, when:
-- a required check failed or is unfinished;
-- no check is required and the step does not set `allow_no_checks: true`;
+- a check that counts failed or is unfinished;
+- no check counts and the step does not set `allow_no_checks: true`;
 - the head commit is not `head_sha`;
 - the pull request is closed or already merged;
 - GitHub refuses the merge, for example because a required review is missing.
@@ -121,6 +140,10 @@ A pull request that is already merged SHALL also give its merge commit.
 - **WHEN** the required check `test` failed on the head commit
 - **THEN** the output is `merged: false` with a reason that names `test`, and the pull request is still open
 
+#### Scenario: A red pipeline on a repository with no rules
+- **WHEN** the base branch has no rules, the step gives `count: all`, and the check `deploy` failed
+- **THEN** the output is `merged: false` with a reason that names `deploy`
+
 #### Scenario: The branch moved
 - **WHEN** the step gives a `head_sha` and the branch has a newer commit
 - **THEN** the output is `merged: false` with a reason that says the branch moved
@@ -130,7 +153,7 @@ A pull request that is already merged SHALL also give its merge commit.
 - **THEN** the output is `merged: false` with GitHub's reason
 
 #### Scenario: No checks, and that is allowed
-- **WHEN** no check is required and the step sets `allow_no_checks: true`
+- **WHEN** no check counts and the step sets `allow_no_checks: true`
 - **THEN** the pull request is merged
 
 #### Scenario: Run twice
@@ -181,7 +204,7 @@ For a call through a GitHub App connection, Weir SHALL ask GitHub for a token li
 
 #### Scenario: Reading checks and merging
 - **WHEN** `github.checks`, then `github.merge_pull_request` or `github.enable_auto_merge`, run
-- **THEN** the first asks to read pull requests, checks, statuses, actions and administration (for the base branch's rules), and nothing it can write with
+- **THEN** the first asks to read pull requests, checks, statuses and actions, and nothing it can write with
 - **AND** the second asks also to write contents and pull requests
 
 #### Scenario: A read, a second read, then a write
