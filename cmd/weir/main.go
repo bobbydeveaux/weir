@@ -432,6 +432,12 @@ func (a *app) agent([]string) error {
 	if url == "" || token == "" {
 		return errors.New("agent is started in an agent's container, which is given WEIR_URL and WEIR_AGENT_TOKEN")
 	}
+	// How the agent is given its tools is this container's to say. A value
+	// that is not known stops here, before anything is asked of Weir.
+	permissions := a.getenv("WEIR_AGENT_PERMISSIONS")
+	if err := runner.CheckPermissions(permissions); err != nil {
+		return err
+	}
 	// The agent's command line is given this container's environment, apart
 	// from Weir's own variables. There is nothing else here to keep from it.
 	var pass []string
@@ -440,7 +446,7 @@ func (a *app) agent([]string) error {
 			pass = append(pass, name)
 		}
 	}
-	return agent.Run(a.ctx, &agent.Client{BaseURL: url, Token: token}, &runner.Claude{Unrestricted: true, Env: pass})
+	return agent.Run(a.ctx, &agent.Client{BaseURL: url, Token: token}, &runner.Claude{Unrestricted: true, Permissions: permissions, Env: pass})
 }
 
 // mcp is started by an agent's command line, not by a person. It serves MCP

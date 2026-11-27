@@ -37,6 +37,11 @@ type Claude struct {
 	// container of its own, where the container is the boundary and there is
 	// nothing in reach to protect. Weir's worker never sets it.
 	Unrestricted bool
+	// Permissions says how an Unrestricted agent is given its tools. Empty or
+	// PermissionsBypass switches the command line's permission checks off.
+	// PermissionsAllow leaves them on and allows every tool by name, for a
+	// sign-in whose organisation forbids switching them off.
+	Permissions string
 	// Shell says whether a step may give its agent a shell. It is off unless
 	// whoever runs the worker turns it on.
 	Shell bool
@@ -180,14 +185,55 @@ func finish(req RunRequest, res RunResult, out claudeOutput, dir string, before 
 // allTools stands for every built-in tool, with permission checks off.
 const allTools = "*"
 
+// allAllowed stands for every built-in tool, with permission checks on and
+// each tool allowed by name.
+const allAllowed = "*allowed"
+
+// The ways an agent in a container of its own is given its tools.
+const (
+	PermissionsBypass = "bypass"
+	PermissionsAllow  = "allow"
+)
+
+// CheckPermissions says whether name is a way to give an agent its tools.
+// Empty means PermissionsBypass.
+func CheckPermissions(name string) error {
+	switch name {
+	case "", PermissionsBypass, PermissionsAllow:
+		return nil
+	}
+	return fmt.Errorf("WEIR_AGENT_PERMISSIONS is %q: it must be %q or %q", name, PermissionsBypass, PermissionsAllow)
+}
+
+// allowedBuiltin names the built-in tools that ask before they act. Allowing
+// each one by name lets the agent use it with permission checks still on. An
+// Edit rule covers every tool that changes a file.
+var allowedBuiltin = []string{"Bash", "Read", "Edit", "Write", "NotebookEdit", "Glob", "Grep", "WebFetch", "WebSearch", "Skill"}
+
+// allowByName adds the built-in tools to the tools args already allow. The
+// step's own tools, when it has any, are the last thing in args.
+func allowByName(args []string) []string {
+	if len(args) == 0 {
+		args = append(args, "--allowedTools")
+	}
+	return append(args, allowedBuiltin...)
+}
+
 // runUnrestricted runs an agent with every tool, in a working directory of
 // its own. See Unrestricted.
 func (c *Claude) runUnrestricted(ctx context.Context, req RunRequest) (RunResult, error) {
+	if err := CheckPermissions(c.Permissions); err != nil {
+		return RunResult{}, err
+	}
 	extra, cleanup, err := c.toolArgs(req)
 	if err != nil {
 		return RunResult{}, err
 	}
 	defer cleanup()
+	builtin := allTools
+	if c.Permissions == PermissionsAllow {
+		builtin, extra = allAllowed, allowByName(extra)
+	}
 	if req.Workspace != nil && len(req.Files) > 0 {
 		return RunResult{}, errors.New("a step that works in a prepared directory cannot also be given files")
 	}
@@ -215,7 +261,7 @@ func (c *Claude) runUnrestricted(ctx context.Context, req RunRequest) (RunResult
 	if req.Effort != "" {
 		extra = append(extra, "--effort", req.Effort)
 	}
-	out, err := c.call(ctx, system, req.Prompt, c.model(req.Tier, req.Model), req.Schema, req.BudgetUSD, allTools, dir, extra...)
+	out, err := c.call(ctx, system, req.Prompt, c.model(req.Tier, req.Model), req.Schema, req.BudgetUSD, builtin, dir, extra...)
 	res := RunResult{Usage: out.usage, Transcript: out.text}
 	if err != nil {
 		return res, err
@@ -283,12 +329,19 @@ func claudeArgs(system, model string, schema []byte, budgetUSD float64, builtin 
 		"--strict-mcp-config", // no MCP servers except those Weir names
 		"--no-session-persistence",
 	}
-	if builtin == allTools {
+	if builtin == allTools || builtin == allAllowed {
 		// An agent in a container of its own: every tool, and no questions.
 		// It keeps the command line's own guidance on how to use them, and
 		// loads the skills and settings in its home directory, which whoever
 		// built the image put there. A repository's own are still ignored.
-		args = append(args, "--dangerously-skip-permissions", "--setting-sources", "user")
+		if builtin == allTools {
+			args = append(args, "--dangerously-skip-permissions")
+		} else {
+			// Permission checks stay on. The caller allows each tool by
+			// name, and anything else is refused without asking.
+			args = append(args, "--permission-mode", "dontAsk")
+		}
+		args = append(args, "--setting-sources", "user")
 		if system != "" {
 			args = append(args, "--append-system-prompt", system)
 		}

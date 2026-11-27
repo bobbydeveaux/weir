@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -232,6 +234,34 @@ func TestServeChecksTheAdminKeyBeforeAnythingElse(t *testing.T) {
 		}
 		if strings.Contains(errOut.String(), "s3cret") {
 			t.Errorf("%s: stderr = %q repeats the key", name, errOut.String())
+		}
+	}
+}
+
+func TestAnAgentRefusesPermissionsItDoesNotKnow(t *testing.T) {
+	asked := 0
+	weir := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		asked++
+		w.WriteHeader(http.StatusConflict)
+	}))
+	defer weir.Close()
+	env := map[string]string{"WEIR_URL": weir.URL, "WEIR_AGENT_TOKEN": "one-time", "WEIR_AGENT_PERMISSIONS": "off"}
+	var out, errOut bytes.Buffer
+	if code := run(context.Background(), []string{"agent"}, func(k string) string { return env[k] }, &out, &errOut); code != 1 {
+		t.Fatalf("exit code = %d, want 1", code)
+	}
+	if !strings.Contains(errOut.String(), "WEIR_AGENT_PERMISSIONS") || !strings.Contains(errOut.String(), `"off"`) {
+		t.Errorf("stderr = %q, want it to name the setting and the value", errOut.String())
+	}
+	if asked != 0 {
+		t.Errorf("the agent asked Weir for something %d times before refusing", asked)
+	}
+	// A value it knows gets as far as asking Weir for its job.
+	for _, permissions := range []string{"", "bypass", "allow"} {
+		env["WEIR_AGENT_PERMISSIONS"], asked = permissions, 0
+		run(context.Background(), []string{"agent"}, func(k string) string { return env[k] }, &out, &errOut)
+		if asked == 0 {
+			t.Errorf("with %q the agent never asked for its job", permissions)
 		}
 	}
 }
