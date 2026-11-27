@@ -86,6 +86,8 @@ The earlier projects ran command lines in two ways. Three of them ran every prov
 | The process gets a clean environment with only the token it needs | In two earlier projects the agent could read every secret the worker held |
 | It runs in a throwaway working directory with a time limit | A stuck agent is killed and the attempt fails cleanly |
 
+An agent in a container of its own is the exception: the container is the boundary, so it is given every tool. By default its permission checks are off. `WEIR_AGENT_PERMISSIONS=allow`, set in the container, keeps them on and allows every built-in tool and each of the step's tools by name instead, for a sign-in whose organisation forbids switching the checks off.
+
 ## Command line or API
 
 | | `cli` runner | `api` runner |

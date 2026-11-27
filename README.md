@@ -107,6 +107,7 @@ To make one real call through the Claude command line: `WEIR_TEST_CLAUDE=1 go te
 | `WEIR_REQUIRE_ADMIN_KEY` | Refuse to start without `WEIR_ADMIN_KEY` or `WEIR_ADMIN_KEY_FILE`. The container image sets it | not set |
 | `WEIR_WORKER_CONCURRENCY` | How many steps the server's worker runs at once, from 1 to 256. An `ai` step spends most of its time waiting on a model, so one server can hold many. Each step is still claimed by one worker and keeps its own lease. Above about 4, raise `pool_max_conns` in the database address to match, or steps wait for a connection | 1 |
 | `WEIR_AGENT_RUNNER` | Where agents run: `inline` (beside the worker), `docker` (a container each), `kubernetes` (a Job each) or `cloudrun` (a run of a Cloud Run job each). See "Where agents run" below | `inline` |
+| `WEIR_AGENT_PERMISSIONS` | Read in an agent's own container, not by the server. `bypass` switches the command line's permission checks off. `allow` leaves them on and allows every tool by name, for a sign-in whose organisation forbids switching them off. See "Where agents run" below | `bypass` |
 | `WEIR_AGENT_IMAGE` | The image agents run in, for `docker`. Build it from `deploy/agent.Dockerfile` | none |
 | `WEIR_AGENT_URL` | Weir's address as an agent's container reaches it | `http://host.docker.internal` and the API's port |
 | `WEIR_AGENT_DOCKER_ARGS` | Extra arguments for `docker run`: a network, memory and CPU limits | none |
@@ -420,6 +421,14 @@ weir serve
 - What a container may reach on the network is the platform's to decide: a Docker network here (`WEIR_AGENT_DOCKER_ARGS`), a VPC or a security group in a cloud. A step's `shell.hosts` applies only to an agent run inline.
 - Add the toolchains your code needs to the image; `deploy/agent.Dockerfile` says how.
 - Skills and settings in the image's home directory (`~/.claude`) are loaded, because whoever built the image put them there. A repository's own are ignored. An agent run inline loads neither.
+
+**When an organisation forbids switching permission checks off.** By default the agent's command line runs with its permission checks off (`--dangerously-skip-permissions`). An organisation can forbid that for every sign-in it owns. The agent still starts, but each command it tries is refused, and the step ends with the agent saying it could do nothing. Set `WEIR_AGENT_PERMISSIONS=allow` in the agent's container to keep the checks on:
+
+- Every built-in tool (the shell, reading, editing, the web, skills) and each tool the step lists is allowed by name. Anything else is refused without waiting for a person.
+- The agent can do the same work. There is still no sandbox: the container is the boundary.
+- A deny rule in the organisation's policy still applies, which it does not under `bypass`.
+- The setting belongs to the container, so set it where the container's environment is set: `ENV` in the image, the Kubernetes Secret, the Cloud Run job, or `WEIR_AGENT_DOCKER_ARGS="--env WEIR_AGENT_PERMISSIONS=allow"` with Docker.
+- Any other value stops the agent before it fetches its job.
 
 Know the limits:
 

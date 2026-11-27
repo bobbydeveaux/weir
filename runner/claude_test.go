@@ -512,3 +512,75 @@ func TestAnAgentInItsOwnContainerIsGivenEveryTool(t *testing.T) {
 		t.Errorf("args = %s", joined)
 	}
 }
+
+func TestAnAgentInItsOwnContainerCanKeepPermissionChecksOn(t *testing.T) {
+	var args []string
+	c := &Claude{Unrestricted: true, Permissions: PermissionsAllow, Bridge: []string{"weir", "mcp"},
+		run: func(_ context.Context, _ string, a, _ []string, _, d string) ([]byte, error) {
+			args = a
+			_ = os.WriteFile(filepath.Join(d, "main.go"), []byte("package main // fixed\n"), 0o600)
+			return []byte(`{"result":"ok","structured_output":{"ok":true},"total_cost_usd":0.01}`), nil
+		}}
+	res, err := c.Run(context.Background(), RunRequest{System: "Be brief.", Prompt: "fix it", Effort: "high", Schema: json.RawMessage(`{"type":"object"}`),
+		Tools:     []Tool{{Name: "tickets.search"}},
+		Workspace: &Workspace{Prepare: repo}, Writes: &WriteLimit{MaxFiles: 10, MaxBytes: 1 << 20}})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	joined := strings.Join(args, " ")
+	// Permission checks are not bypassed, and nothing waits for a person.
+	if strings.Contains(joined, "dangerously") || strings.Contains(joined, "bypassPermissions") || !strings.Contains(joined, "--permission-mode dontAsk") {
+		t.Errorf("permission checks: %s", joined)
+	}
+	// Every built-in tool is allowed by name, beside the step's own, in one list.
+	if strings.Count(joined, "--allowedTools") != 1 ||
+		!strings.Contains(joined, "--allowedTools mcp__weir__tickets_search Bash Read Edit Write NotebookEdit Glob Grep WebFetch WebSearch Skill --effort high") {
+		t.Errorf("allowed tools: %s", joined)
+	}
+	// It is still not limited to a list of tools, and has no sandbox.
+	if strings.Contains(joined, "--tools") || strings.Contains(joined, "sandbox") {
+		t.Errorf("the agent was restricted: %s", joined)
+	}
+	// The rest is as for any agent in a container.
+	if !strings.Contains(joined, "--append-system-prompt Be brief.") || !strings.Contains(joined, "--setting-sources user") || !strings.Contains(joined, "--strict-mcp-config") {
+		t.Errorf("args = %s", joined)
+	}
+	if len(res.Files) != 1 || res.Files[0].Name != "main.go" {
+		t.Errorf("changes = %+v", res.Files)
+	}
+
+	// With no tools of its own, the step's agent is still allowed the built-in ones.
+	c.Bridge = nil
+	if _, err := c.Run(context.Background(), RunRequest{Prompt: "fix it", Schema: json.RawMessage(`{"type":"object"}`), Workspace: &Workspace{Prepare: repo}}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if joined := strings.Join(args, " "); !strings.Contains(joined, "--allowedTools Bash Read ") {
+		t.Errorf("allowed tools with none listed: %s", joined)
+	}
+}
+
+func TestAnAgentInItsOwnContainerBypassesPermissionChecksUnlessTold(t *testing.T) {
+	for _, permissions := range []string{"", PermissionsBypass} {
+		var args []string
+		c := &Claude{Unrestricted: true, Permissions: permissions, run: func(_ context.Context, _ string, a, _ []string, _, _ string) ([]byte, error) {
+			args = a
+			return []byte(`{"result":"ok","structured_output":{"ok":true}}`), nil
+		}}
+		if _, err := c.Run(context.Background(), RunRequest{Prompt: "fix it", Schema: json.RawMessage(`{"type":"object"}`)}); err != nil {
+			t.Fatalf("Run with %q: %v", permissions, err)
+		}
+		joined := strings.Join(args, " ")
+		if !strings.Contains(joined, "--dangerously-skip-permissions") || strings.Contains(joined, "--permission-mode") || strings.Contains(joined, "--allowedTools") {
+			t.Errorf("with %q: %s", permissions, joined)
+		}
+	}
+	called := false
+	c := &Claude{Unrestricted: true, Permissions: "off", run: func(context.Context, string, []string, []string, string, string) ([]byte, error) {
+		called = true
+		return nil, nil
+	}}
+	_, err := c.Run(context.Background(), RunRequest{Prompt: "fix it"})
+	if err == nil || !strings.Contains(err.Error(), "WEIR_AGENT_PERMISSIONS") || called {
+		t.Errorf("an unknown value: err = %v, called = %v", err, called)
+	}
+}
